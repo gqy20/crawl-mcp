@@ -44,24 +44,29 @@ def get_default_llm_config() -> LLMConfig:
 
 
 def get_llm_config(config: Optional[Dict[str, Any]]) -> LLMConfig:
-    """合并用户配置和环境变量默认值
+    """从环境变量获取 LLM 配置，合并用户提供的业务参数
 
     Args:
-        config: 用户提供的配置字典，可以为 None
+        config: 用户提供的业务配置，可选包含:
+            - instruction: 提取指令
+            - schema: JSON Schema (可选)
 
     Returns:
-        LLMConfig 实例
+        LLMConfig 实例，api_key/base_url/model 从环境变量读取
+
+    Raises:
+        ValueError: 如果 OPENAI_API_KEY 环境变量未设置
     """
     default = get_default_llm_config()
 
     if config is None:
         return default
 
-    # 用户配置覆盖环境变量默认值
+    # 只接受业务参数，认证配置从环境变量读取
     return LLMConfig(
-        api_key=config.get("api_key", default.api_key),
-        base_url=config.get("base_url", default.base_url),
-        model=config.get("model", default.model),
+        api_key=default.api_key,
+        base_url=default.base_url,
+        model=default.model,
         instruction=config.get("instruction", ""),
         schema=config.get("schema"),
     )

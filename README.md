@@ -89,13 +89,10 @@ pip install crawl-mcp
 
 ## LLM 配置
 
-所有工具支持可选的 `llm_config` 参数：
+所有工具支持可选的 `llm_config` 参数，用于 AI 驱动的内容提取：
 
 ```json
 {
-  "api_key": "sk-xxx",
-  "base_url": "https://api.deepseek.com/v1",
-  "model": "deepseek-chat",
   "instruction": "提取产品信息",
   "schema": {
     "type": "object",
@@ -106,6 +103,12 @@ pip install crawl-mcp
   }
 }
 ```
+
+**参数说明**：
+- `instruction`: 提取指令，告诉 LLM 需要提取什么内容
+- `schema`: 可选的 JSON Schema，用于结构化输出
+
+**注意**：`api_key`、`base_url`、`model` 从环境变量读取，无需在调用时传入。
 
 ## 开发
 

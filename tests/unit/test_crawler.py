@@ -2,7 +2,7 @@
 
 import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock, call
 from crawl4ai_mcp.crawler import Crawler
 from crawl4ai_mcp.llm_config import LLMConfig
 
@@ -248,3 +248,97 @@ class TestCrawlerLLMIntegration:
         # 验证 _crawl_batch 被调用，且参数包含 llm_config
         assert mock_batch.called
         assert mock_batch.call_args.kwargs.get("llm_config") == llm_config
+
+
+class TestCrawlerRetryMechanism:
+    """测试网络错误重试机制"""
+
+    @pytest.mark.asyncio
+    async def test_retry_on_network_changed_error(self):
+        """测试遇到 ERR_NETWORK_CHANGED 时自动重试"""
+        # Arrange
+        crawler = Crawler()
+        url = "https://example.com"
+        call_count = 0
+
+        async def mock_arun(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise RuntimeError("Failed on navigating ACS-GOTO: net::ERR_NETWORK_CHANGED")
+            # 第二次成功
+            result = MagicMock()
+            result.success = True
+            result.markdown.raw_markdown = "# Success"
+            result.metadata = {"title": "Test"}
+            result.error_message = None
+            result.extracted_content = None
+            return result
+
+        # Act
+        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_crawler_class:
+            mock_crawler = MagicMock()
+            mock_crawler.__aenter__ = AsyncMock(return_value=mock_crawler)
+            mock_crawler.__aexit__ = AsyncMock(return_value=None)
+            mock_crawler.arun = mock_arun
+            mock_crawler_class.return_value = mock_crawler
+
+            result = crawler.crawl_single(url)
+
+        # Assert
+        assert result["success"] is True
+        assert call_count == 2  # 失败1次，重试成功
+
+    @pytest.mark.asyncio
+    async def test_no_retry_on_other_errors(self):
+        """测试非网络错误不重试"""
+        # Arrange
+        crawler = Crawler()
+        url = "https://example.com"
+        call_count = 0
+
+        async def mock_arun(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise ValueError("Some other error")
+
+        # Act & Assert
+        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_crawler_class:
+            mock_crawler = MagicMock()
+            mock_crawler.__aenter__ = AsyncMock(return_value=mock_crawler)
+            mock_crawler.__aexit__ = AsyncMock(return_value=None)
+            mock_crawler.arun = mock_arun
+            mock_crawler_class.return_value = mock_crawler
+
+            with pytest.raises(ValueError, match="Some other error"):
+                crawler.crawl_single(url)
+
+        # 只调用一次，没有重试
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retry_exhausted_gives_up(self):
+        """测试重试次数用尽后放弃"""
+        # Arrange
+        crawler = Crawler()
+        url = "https://example.com"
+        call_count = 0
+
+        async def mock_arun(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            raise RuntimeError("net::ERR_NETWORK_CHANGED")
+
+        # Act & Assert
+        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_crawler_class:
+            mock_crawler = MagicMock()
+            mock_crawler.__aenter__ = AsyncMock(return_value=mock_crawler)
+            mock_crawler.__aexit__ = AsyncMock(return_value=None)
+            mock_crawler.arun = mock_arun
+            mock_crawler_class.return_value = mock_crawler
+
+            with pytest.raises(RuntimeError, match="ERR_NETWORK_CHANGED"):
+                crawler.crawl_single(url)
+
+        # 重试3次，共4次调用
+        assert call_count == 4

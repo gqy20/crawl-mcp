@@ -15,6 +15,9 @@ dependencies = [
 [project.scripts]
 crawl4ai = "main:main"
 
+[project.entry-points."mcp.servers"]
+crawl-mcp = "crawl4ai_mcp.fastmcp_server:mcp"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

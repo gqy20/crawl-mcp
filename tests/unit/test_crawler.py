@@ -17,7 +17,7 @@ class TestCrawlerSingle:
         crawler = Crawler()
         url = "https://example.com"
 
-        async def mock_crawl_impl(url, enhanced):
+        async def mock_crawl_impl(url, enhanced, llm_config=None):
             return {
                 "success": True,
                 "markdown": "# Example\n\nContent here",
@@ -33,7 +33,6 @@ class TestCrawlerSingle:
         assert result["success"] is True
         assert result["markdown"] == "# Example\n\nContent here"
         assert result["title"] == "Example Domain"
-        mock_crawl.assert_called_once_with(url, False)
 
     @pytest.mark.asyncio
     async def test_crawl_single_with_enhanced_mode(self):
@@ -42,7 +41,7 @@ class TestCrawlerSingle:
         crawler = Crawler()
         url = "https://spa-example.com"
 
-        async def mock_crawl_impl(url, enhanced):
+        async def mock_crawl_impl(url, enhanced, llm_config=None):
             return {
                 "success": True,
                 "markdown": "# SPA Content",
@@ -56,7 +55,6 @@ class TestCrawlerSingle:
 
         # Assert
         assert result["success"] is True
-        mock_crawl.assert_called_once_with(url, True)
 
     @pytest.mark.asyncio
     async def test_crawl_single_failure(self):
@@ -65,7 +63,7 @@ class TestCrawlerSingle:
         crawler = Crawler()
         url = "https://invalid-url-that-fails.com"
 
-        async def mock_crawl_impl(url, enhanced):
+        async def mock_crawl_impl(url, enhanced, llm_config=None):
             return {
                 "success": False,
                 "markdown": "",

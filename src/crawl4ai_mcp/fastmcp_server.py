@@ -4,8 +4,15 @@ from typing import List, Dict, Any, Optional, Union
 from fastmcp import FastMCP
 from crawl4ai_mcp.crawler import Crawler
 
+# 读取包版本
+try:
+    from importlib.metadata import version as get_version
+    __version__ = get_version("crawl_mcp")
+except Exception:
+    __version__ = "0.1.0"
+
 # 创建 FastMCP 实例
-mcp = FastMCP(name="crawl-mcp")
+mcp = FastMCP(name="crawl-mcp", version=__version__)
 
 # 创建爬虫实例（单例）
 _crawler = Crawler()

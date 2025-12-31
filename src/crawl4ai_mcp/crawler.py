@@ -29,6 +29,36 @@ def _calculate_success_rate(results: List[Dict[str, Any]]) -> str:
     return f"{successful / len(results) * 100:.1f}%"
 
 
+def _parse_llm_config(llm_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """解析 llm_config，兼容字符串和字典两种格式
+
+    Args:
+        llm_config: 可以是 Dict、JSON 字符串、或纯文本字符串
+
+    Returns:
+        解析后的字典，如果输入是纯文本则当作 instruction
+    """
+    if llm_config is None:
+        return None
+
+    # 如果已经是字典，直接返回
+    if isinstance(llm_config, dict):
+        return llm_config
+
+    # 如果是字符串，尝试解析
+    if isinstance(llm_config, str):
+        import json
+        try:
+            # 尝试解析为 JSON 对象
+            return json.loads(llm_config)
+        except json.JSONDecodeError:
+            # 解析失败，当作纯文本 instruction
+            return {"instruction": llm_config}
+
+    # 其他类型，尝试转换为字符串再处理
+    return {"instruction": str(llm_config)}
+
+
 class Crawler:
     """统一的爬虫类，整合单页、整站、批量爬取功能"""
 
@@ -57,11 +87,13 @@ class Crawler:
 
         Args:
             config: 基础爬虫配置
-            llm_config: LLM 配置字典（可选）
+            llm_config: LLM 配置（可选），支持字典、JSON 字符串或纯文本
 
         Returns:
             添加了 LLM 策略的配置（原地修改或返回原配置）
         """
+        # 兼容处理：解析字符串格式的配置
+        llm_config = _parse_llm_config(llm_config)
         if not llm_config:
             return config
 
@@ -69,11 +101,12 @@ class Crawler:
         from crawl4ai import LLMConfig as Crawl4AILLMConfig
 
         llm = get_llm_config(llm_config)
+        # crawl4ai 的 LLMConfig 使用 provider 参数，格式为 "openai/model-name"
+        provider = f"openai/{llm.model}" if "/" not in llm.model else llm.model
         crawl4ai_llm_config = Crawl4AILLMConfig(
-            provider="openai",
+            provider=provider,
             api_token=llm.api_key,
             base_url=llm.base_url,
-            model=llm.model,
         )
 
         extraction_strategy = LLMExtractionStrategy(
@@ -150,6 +183,89 @@ class Crawler:
                 # 其他错误或重试用尽，抛出异常
                 raise
 
+    def _call_llm(
+        self,
+        content: str,
+        instruction: str,
+        schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        调用 LLM 处理文本内容
+
+        Args:
+            content: 要处理的内容
+            instruction: 处理指令
+            schema: 可选的 JSON Schema
+
+        Returns:
+            处理结果字典
+        """
+        from openai import OpenAI
+        from .llm_config import get_default_llm_config
+
+        llm_cfg = get_default_llm_config()
+        client = OpenAI(api_key=llm_cfg.api_key, base_url=llm_cfg.base_url)
+
+        messages = [
+            {"role": "system", "content": "你是一个专业的文本处理助手。"},
+            {"role": "user", "content": f"指令：{instruction}\n\n内容：\n{content}"}
+        ]
+
+        if schema:
+            messages[0]["content"] += f"\n\n请按照以下 JSON Schema 返回结果：{schema}"
+
+        try:
+            response = client.chat.completions.create(
+                model=llm_cfg.model,
+                messages=messages,
+                temperature=0.3,
+            )
+            result_text = response.choices[0].message.content
+
+            # 尝试解析为 JSON
+            if schema:
+                try:
+                    import json
+                    return {"success": True, "data": json.loads(result_text)}
+                except json.JSONDecodeError:
+                    return {"success": True, "content": result_text}
+            else:
+                return {"success": True, "summary": result_text}
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "content": content  # 失败时返回原内容
+            }
+
+    def postprocess_markdown(
+        self,
+        markdown: str,
+        instruction: str,
+        schema: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        对 Markdown 内容进行 LLM 后处理
+
+        Args:
+            markdown: Markdown 内容
+            instruction: 处理指令
+            schema: 可选的 JSON Schema
+
+        Returns:
+            处理结果，包含 summary 或 data 字段
+        """
+        if not instruction or not instruction.strip():
+            return {
+                "success": True,
+                "original_markdown": markdown,
+                "skipped": "No instruction provided"
+            }
+
+        # 直接调用同步的 _call_llm
+        return self._call_llm(markdown, instruction, schema)
+
     def crawl_single(
         self,
         url: str,
@@ -159,15 +275,51 @@ class Crawler:
         """
         爬取单个网页 (同步封装)
 
+        新设计：先快速爬取 Markdown，然后可选地进行 LLM 后处理
+
         Args:
             url: 网页 URL
             enhanced: 是否使用增强 SPA 模式
-            llm_config: LLM 配置字典（可选）
+            llm_config: LLM 配置（可选），支持:
+                - Dict: {"instruction": "...", "schema": {...}}
+                - JSON 字符串: '{"instruction": "..."}'
+                - 纯文本: "总结页面"（自动作为 instruction）
 
         Returns:
-            爬取结果字典
+            爬取结果字典，包含:
+            - success, markdown, title, error（爬取结果）
+            - llm_summary 或 llm_data（LLM 处理结果，如果提供 llm_config）
         """
-        return _run_async(self._crawl(url, enhanced, llm_config))
+        # 解析 llm_config
+        parsed_llm_config = _parse_llm_config(llm_config)
+
+        # 第一步：快速爬取（不使用 LLM 策略）
+        crawl_result = _run_async(self._crawl(url, enhanced, llm_config=None))
+
+        # 第二步：如果有 LLM 配置，对 Markdown 进行后处理
+        if parsed_llm_config and crawl_result["success"]:
+            instruction = parsed_llm_config.get("instruction", "")
+            schema = parsed_llm_config.get("schema")
+
+            if instruction:  # 只有有 instruction 时才处理
+                llm_result = self.postprocess_markdown(
+                    crawl_result["markdown"],
+                    instruction,
+                    schema
+                )
+
+                # 将 LLM 结果合并到响应中
+                if llm_result.get("success"):
+                    if "summary" in llm_result:
+                        crawl_result["llm_summary"] = llm_result["summary"]
+                    if "data" in llm_result:
+                        crawl_result["llm_data"] = llm_result["data"]
+                    if "content" in llm_result:
+                        crawl_result["llm_content"] = llm_result["content"]
+                else:
+                    crawl_result["llm_error"] = llm_result.get("error", "Unknown error")
+
+        return crawl_result
 
     async def _crawl_site(
         self,

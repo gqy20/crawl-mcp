@@ -1,6 +1,6 @@
 """FastMCP 服务器实现"""
 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from fastmcp import FastMCP
 from crawl4ai_mcp.crawler import Crawler
 
@@ -15,7 +15,7 @@ _crawler = Crawler()
 def crawl_single(
     url: str,
     enhanced: bool = False,
-    llm_config: Optional[Dict[str, Any]] = None
+    llm_config: Optional[Union[Dict[str, Any], str]] = None
 ) -> Dict[str, Any]:
     """
     爬取单个网页，返回 Markdown 格式内容
@@ -23,9 +23,10 @@ def crawl_single(
     Args:
         url: 要爬取的网页 URL
         enhanced: 是否使用增强模式（适用于 SPA 网站，等待时间更长）
-        llm_config: LLM 配置（可选），用于 AI 驱动的内容提取:
-            - instruction: 提取指令，如 "总结页面内容" 或 "提取产品信息"
-            - schema: 可选的 JSON Schema，用于结构化输出
+        llm_config: LLM 配置（可选），支持三种格式:
+            - 字典: {"instruction": "总结", "schema": {...}}
+            - JSON 字符串: '{"instruction": "总结"}'
+            - 纯文本: "总结页面内容"（自动作为 instruction）
 
     Returns:
         包含 success, markdown, title, error, (可选) llm_result 的字典
@@ -39,7 +40,7 @@ def crawl_site(
     depth: int = 2,
     pages: int = 10,
     concurrent: int = 3,
-    llm_config: Optional[Dict[str, Any]] = None
+    llm_config: Optional[Union[Dict[str, Any], str]] = None
 ) -> Dict[str, Any]:
     """
     递归爬取整个网站
@@ -61,10 +62,10 @@ def crawl_site(
 def crawl_batch(
     urls: List[str],
     concurrent: int = 3,
-    llm_config: Optional[Dict[str, Any]] = None
+    llm_config: Optional[Union[Dict[str, Any], str]] = None
 ) -> List[Dict[str, Any]]:
     """
-    批量爬取多个网页（真正的异步并行执行）
+    批量爬取多个网页（异步并行）
 
     Args:
         urls: URL 列表

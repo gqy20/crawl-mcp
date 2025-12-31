@@ -2,6 +2,9 @@
 
 基于 crawl4ai 和 FastMCP 的 MCP 服务器，提供网页爬取和 AI 分析功能。
 
+[![PyPI Version](https://img.shields.io/pypi/v/crawl-mcp)](https://pypi.org/project/crawl-mcp/)
+[![GitHub](https://img.shields.io/badge/source-GitHub-black)](https://github.com/gqy20/crawl-mcp)
+
 ## 功能
 
 - **crawl_single** - 爬取单个网页，返回 Markdown 格式
@@ -45,8 +48,26 @@ pip install crawl-mcp
 {
   "mcpServers": {
     "crawl-mcp": {
-      "command": "uv",
-      "args": ["--directory", "/path/to/crawl4ai", "run", "crawl-mcp", "--http"],
+      "command": "crawl-mcp",
+      "env": {
+        "OPENAI_API_KEY": "your-api-key"
+      }
+    }
+  }
+}
+```
+
+> **注意**：`pip install crawl-mcp` 后，`crawl-mcp` 命令会自动安装到系统路径中。
+
+### 高级配置（可选）
+
+如需自定义 API 端点或模型：
+
+```json
+{
+  "mcpServers": {
+    "crawl-mcp": {
+      "command": "crawl-mcp",
       "env": {
         "OPENAI_API_KEY": "your-api-key",
         "OPENAI_BASE_URL": "https://api.openai.com/v1",

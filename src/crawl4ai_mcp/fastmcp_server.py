@@ -86,8 +86,8 @@ def crawl_batch(
     return _crawler.crawl_batch(urls, concurrent, llm_config)
 
 
-# CLI 入口点
-if __name__ == "__main__":
+def main():
+    """CLI 入口点"""
     import sys
 
     # 默认使用 STDIO，但支持通过参数指定 HTTP
@@ -95,3 +95,8 @@ if __name__ == "__main__":
         mcp.run(transport="http", host="0.0.0.0", port=8001)
     else:
         mcp.run()
+
+
+# CLI 入口点
+if __name__ == "__main__":
+    main()

@@ -32,6 +32,9 @@ Issues = "https://github.com/gqy20/crawl-mcp/issues"
 [project.entry-points."mcp.servers"]
 crawl-mcp = "crawl4ai_mcp.fastmcp_server:mcp"
 
+[project.scripts]
+crawl-mcp = "crawl4ai_mcp.fastmcp_server:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -48,7 +48,8 @@ pip install crawl-mcp
 {
   "mcpServers": {
     "crawl-mcp": {
-      "command": "crawl-mcp",
+      "command": "uvx",
+      "args": ["crawl-mcp"],
       "env": {
         "OPENAI_API_KEY": "your-api-key"
       }
@@ -56,8 +57,6 @@ pip install crawl-mcp
   }
 }
 ```
-
-> **注意**：`pip install crawl-mcp` 后，`crawl-mcp` 命令会自动安装到系统路径中。
 
 ### 高级配置（可选）
 
@@ -67,7 +66,8 @@ pip install crawl-mcp
 {
   "mcpServers": {
     "crawl-mcp": {
-      "command": "crawl-mcp",
+      "command": "uvx",
+      "args": ["crawl-mcp"],
       "env": {
         "OPENAI_API_KEY": "your-api-key",
         "OPENAI_BASE_URL": "https://api.openai.com/v1",

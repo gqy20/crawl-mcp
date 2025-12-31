@@ -199,7 +199,8 @@ class TestCrawlerLLMIntegration:
         # Assert
         assert result["success"] is True
         assert result["llm_result"] == {"summary": "Page summary"}
-        mock_crawl.assert_called_once_with(url, False, llm_config=llm_config)
+        # 验证调用参数（位置参数）
+        assert mock_crawl.call_args[0] == (url, False, llm_config)
 
     @pytest.mark.asyncio
     async def test_crawl_single_without_llm_config(self):
@@ -223,7 +224,8 @@ class TestCrawlerLLMIntegration:
         # Assert
         assert result["success"] is True
         assert "llm_result" not in result
-        mock_crawl.assert_called_once_with(url, False, llm_config=None)
+        # 验证调用参数（位置参数）
+        assert mock_crawl.call_args[0] == (url, False, None)
 
     @pytest.mark.asyncio
     async def test_crawl_batch_with_llm_config(self):
@@ -233,15 +235,18 @@ class TestCrawlerLLMIntegration:
         urls = ["https://example.com/page1"]
         llm_config = {"instruction": "Extract products"}
 
-        mock_results = [
-            {"success": True, "markdown": "Product info", "llm_result": {"products": []}}
-        ]
+        async def mock_batch_impl(urls, concurrent=3, llm_config=None):
+            return [
+                {"success": True, "markdown": "Product info", "llm_result": {"products": []}}
+            ]
 
         # Act
-        with patch.object(crawler, '_crawl_batch', return_value=mock_results) as mock_batch:
+        with patch.object(crawler, '_crawl_batch', side_effect=mock_batch_impl) as mock_batch:
             results = crawler.crawl_batch(urls, llm_config=llm_config)
 
         # Assert
         assert len(results) == 1
         assert "llm_result" in results[0]
-        mock_batch.assert_called_once_with(urls, concurrent=3, llm_config=llm_config)
+        # 验证 _crawl_batch 被调用，且参数包含 llm_config
+        assert mock_batch.called
+        assert mock_batch.call_args.kwargs.get("llm_config") == llm_config

@@ -1,9 +1,10 @@
 """Crawler 类 - 核心爬虫逻辑"""
 
 import asyncio
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
+from .llm_config import get_llm_config
 
 
 def _run_async(coro):
@@ -46,41 +47,83 @@ class Crawler:
             delay_before_return_html=5.0 if not enhanced else 15.0,
         )
 
-    async def _crawl(self, url: str, enhanced: bool = False) -> Dict[str, Any]:
+    async def _crawl(
+        self,
+        url: str,
+        enhanced: bool = False,
+        llm_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         内部异步爬取方法
 
         Args:
             url: 目标 URL
             enhanced: 是否使用增强模式 (更长等待时间)
+            llm_config: LLM 配置字典（可选）
 
         Returns:
-            包含 success, markdown, title 的字典
+            包含 success, markdown, title, (可选) llm_result 的字典
         """
         config = self._create_config(enhanced)
+
+        # 如果有 LLM 配置，添加 LLM 提取策略
+        if llm_config:
+            from crawl4ai.extraction_strategy import LLMExtractionStrategy
+            from crawl4ai import LLMConfig as Crawl4AILLMConfig
+
+            llm = get_llm_config(llm_config)
+            crawl4ai_llm_config = Crawl4AILLMConfig(
+                provider="openai",
+                api_token=llm.api_key,
+                base_url=llm.base_url,
+                model=llm.model,
+            )
+
+            extraction_strategy = LLMExtractionStrategy(
+                llm_config=crawl4ai_llm_config,
+                instruction=llm.instruction or "Extract and summarize the main content",
+                schema=llm.schema,
+            )
+            config.extraction_strategy = extraction_strategy
 
         async with AsyncWebCrawler(verbose=False) as crawler:
             result = await crawler.arun(url=url, config=config)
 
-            return {
+            response = {
                 "success": result.success,
                 "markdown": result.markdown.raw_markdown if result.success else "",
                 "title": result.metadata.get('title', '') if result.success else '',
                 "error": result.error_message if not result.success else None,
             }
 
-    def crawl_single(self, url: str, enhanced: bool = False) -> Dict[str, Any]:
+            # 如果使用了 LLM 提取，添加结果
+            if llm_config and result.success and result.extracted_content:
+                try:
+                    import json
+                    response["llm_result"] = json.loads(result.extracted_content)
+                except (json.JSONDecodeError, TypeError):
+                    response["llm_result"] = {"raw": result.extracted_content}
+
+            return response
+
+    def crawl_single(
+        self,
+        url: str,
+        enhanced: bool = False,
+        llm_config: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
         """
         爬取单个网页 (同步封装)
 
         Args:
             url: 网页 URL
             enhanced: 是否使用增强 SPA 模式
+            llm_config: LLM 配置字典（可选）
 
         Returns:
             爬取结果字典
         """
-        return _run_async(self._crawl(url, enhanced))
+        return _run_async(self._crawl(url, enhanced, llm_config))
 
     async def _crawl_site(
         self,
@@ -151,7 +194,8 @@ class Crawler:
     async def _crawl_batch(
         self,
         urls: List[str],
-        concurrent: int = 3
+        concurrent: int = 3,
+        llm_config: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         内部批量爬取方法
@@ -159,6 +203,7 @@ class Crawler:
         Args:
             urls: URL 列表
             concurrent: 并发数
+            llm_config: LLM 配置字典（可选）
 
         Returns:
             爬取结果列表
@@ -170,20 +215,26 @@ class Crawler:
         # 完整实现需要使用 asyncio.Semaphore 控制并发
         results = []
         for url in urls:
-            result = await self._crawl(url)
+            result = await self._crawl(url, llm_config=llm_config)
             results.append(result)
 
         return results
 
-    def crawl_batch(self, urls: List[str], concurrent: int = 3) -> List[Dict[str, Any]]:
+    def crawl_batch(
+        self,
+        urls: List[str],
+        concurrent: int = 3,
+        llm_config: Optional[Dict[str, Any]] = None
+    ) -> List[Dict[str, Any]]:
         """
         批量爬取多个网页 (同步封装)
 
         Args:
             urls: URL 列表
             concurrent: 并发数
+            llm_config: LLM 配置字典（可选）
 
         Returns:
             爬取结果列表
         """
-        return _run_async(self._crawl_batch(urls, concurrent=concurrent))
+        return _run_async(self._crawl_batch(urls, concurrent=concurrent, llm_config=llm_config))

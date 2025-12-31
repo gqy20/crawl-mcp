@@ -47,6 +47,43 @@ class Crawler:
             delay_before_return_html=5.0 if not enhanced else 15.0,
         )
 
+    def _add_llm_strategy(
+        self,
+        config: CrawlerRunConfig,
+        llm_config: Optional[Dict[str, Any]]
+    ) -> CrawlerRunConfig:
+        """
+        为配置添加 LLM 提取策略
+
+        Args:
+            config: 基础爬虫配置
+            llm_config: LLM 配置字典（可选）
+
+        Returns:
+            添加了 LLM 策略的配置（原地修改或返回原配置）
+        """
+        if not llm_config:
+            return config
+
+        from crawl4ai.extraction_strategy import LLMExtractionStrategy
+        from crawl4ai import LLMConfig as Crawl4AILLMConfig
+
+        llm = get_llm_config(llm_config)
+        crawl4ai_llm_config = Crawl4AILLMConfig(
+            provider="openai",
+            api_token=llm.api_key,
+            base_url=llm.base_url,
+            model=llm.model,
+        )
+
+        extraction_strategy = LLMExtractionStrategy(
+            llm_config=crawl4ai_llm_config,
+            instruction=llm.instruction or "Extract and summarize the main content",
+            schema=llm.schema,
+        )
+        config.extraction_strategy = extraction_strategy
+        return config
+
     async def _crawl(
         self,
         url: str,
@@ -65,26 +102,7 @@ class Crawler:
             包含 success, markdown, title, (可选) llm_result 的字典
         """
         config = self._create_config(enhanced)
-
-        # 如果有 LLM 配置，添加 LLM 提取策略
-        if llm_config:
-            from crawl4ai.extraction_strategy import LLMExtractionStrategy
-            from crawl4ai import LLMConfig as Crawl4AILLMConfig
-
-            llm = get_llm_config(llm_config)
-            crawl4ai_llm_config = Crawl4AILLMConfig(
-                provider="openai",
-                api_token=llm.api_key,
-                base_url=llm.base_url,
-                model=llm.model,
-            )
-
-            extraction_strategy = LLMExtractionStrategy(
-                llm_config=crawl4ai_llm_config,
-                instruction=llm.instruction or "Extract and summarize the main content",
-                schema=llm.schema,
-            )
-            config.extraction_strategy = extraction_strategy
+        config = self._add_llm_strategy(config, llm_config)
 
         # 重试机制：最多重试 3 次，只对网络错误重试
         max_retries = 3
@@ -224,7 +242,7 @@ class Crawler:
         llm_config: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
-        内部批量爬取方法
+        内部批量爬取方法 - 使用 arun_many 实现真正的异步并行
 
         Args:
             urls: URL 列表
@@ -237,14 +255,44 @@ class Crawler:
         if not urls:
             return []
 
-        # 简化实现：顺序爬取
-        # 完整实现需要使用 asyncio.Semaphore 控制并发
-        results = []
-        for url in urls:
-            result = await self._crawl(url, llm_config=llm_config)
-            results.append(result)
+        from crawl4ai.async_dispatcher import SemaphoreDispatcher
+        import json
 
-        return results
+        # 创建配置（包含 LLM 策略）
+        config = self._create_config(enhanced=False)
+        config = self._add_llm_strategy(config, llm_config)
+
+        # 创建并发控制器
+        dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
+
+        # 使用 arun_many 实现真正的并行爬取
+        async with AsyncWebCrawler(verbose=False) as crawler:
+            results = await crawler.arun_many(
+                urls=urls,
+                config=config,
+                dispatcher=dispatcher
+            )
+
+        # 将 CrawlResultContainer 转换为我们的格式
+        formatted_results = []
+        for r in results:
+            response = {
+                "success": r.success,
+                "markdown": r.markdown.raw_markdown if r.success else "",
+                "title": r.metadata.get('title', '') if r.success else '',
+                "error": r.error_message if not r.success else None,
+            }
+
+            # 如果使用了 LLM 提取，添加结果
+            if llm_config and r.success and r.extracted_content:
+                try:
+                    response["llm_result"] = json.loads(r.extracted_content)
+                except (json.JSONDecodeError, TypeError):
+                    response["llm_result"] = {"raw": r.extracted_content}
+
+            formatted_results.append(response)
+
+        return formatted_results
 
     def crawl_batch(
         self,

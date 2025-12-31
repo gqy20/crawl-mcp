@@ -11,7 +11,7 @@ class TestFastMCPTools:
     def test_mcp_server_has_tools(self):
         """测试 MCP 服务器注册了工具"""
         # Act
-        tools = mcp._tools_manager._tools
+        tools = mcp._tool_manager._tools
 
         # Assert
         tool_names = list(tools.keys())
@@ -22,7 +22,7 @@ class TestFastMCPTools:
     def test_crawl_single_tool_exists(self):
         """测试 crawl_single 工具存在且有正确的 schema"""
         # Act
-        tool = mcp._tools_manager._tools.get("crawl_single")
+        tool = mcp._tool_manager._tools.get("crawl_single")
 
         # Assert
         assert tool is not None
@@ -35,7 +35,7 @@ class TestFastMCPTools:
     def test_crawl_site_tool_exists(self):
         """测试 crawl_site 工具存在且有正确的 schema"""
         # Act
-        tool = mcp._tools_manager._tools.get("crawl_site")
+        tool = mcp._tool_manager._tools.get("crawl_site")
 
         # Assert
         assert tool is not None
@@ -49,7 +49,7 @@ class TestFastMCPTools:
     def test_crawl_batch_tool_exists(self):
         """测试 crawl_batch 工具存在且有正确的 schema"""
         # Act
-        tool = mcp._tools_manager._tools.get("crawl_batch")
+        tool = mcp._tool_manager._tools.get("crawl_batch")
 
         # Assert
         assert tool is not None
@@ -66,17 +66,16 @@ class TestFastMCPToolFunctions:
     async def test_crawl_single_function_works(self):
         """测试 crawl_single 函数能正确执行"""
         # Arrange
-        from crawl4ai_mcp.fastmcp_server import crawl_single
+        from crawl4ai_mcp.fastmcp_server import _crawler
         url = "https://example.com"
 
         async def mock_crawl(url, enhanced):
             return {"success": True, "markdown": "# Test", "title": "Test", "error": None}
 
         # Act
-        with patch("crawl4ai_mcp.fastmcp_server.Crawler") as MockCrawler:
-            mock_instance = MockCrawler.return_value
-            mock_instance.crawl_single = mock_crawl
-            result = crawl_single(url)
+        with patch.object(_crawler, "crawl_single", side_effect=mock_crawl):
+            tool = mcp._tool_manager._tools.get("crawl_single")
+            result = await tool.fn(url)
 
         # Assert
         assert result["success"] is True
@@ -86,7 +85,7 @@ class TestFastMCPToolFunctions:
     async def test_crawl_site_function_works(self):
         """测试 crawl_site 函数能正确执行"""
         # Arrange
-        from crawl4ai_mcp.fastmcp_server import crawl_site
+        from crawl4ai_mcp.fastmcp_server import _crawler
         url = "https://example.com"
 
         async def mock_crawl_site(url, depth, pages, concurrent):
@@ -98,10 +97,9 @@ class TestFastMCPToolFunctions:
             }
 
         # Act
-        with patch("crawl4ai_mcp.fastmcp_server.Crawler") as MockCrawler:
-            mock_instance = MockCrawler.return_value
-            mock_instance.crawl_site = mock_crawl_site
-            result = crawl_site(url)
+        with patch.object(_crawler, "crawl_site", side_effect=mock_crawl_site):
+            tool = mcp._tool_manager._tools.get("crawl_site")
+            result = await tool.fn(url)
 
         # Assert
         assert result["successful_pages"] == 1
@@ -110,17 +108,16 @@ class TestFastMCPToolFunctions:
     async def test_crawl_batch_function_works(self):
         """测试 crawl_batch 函数能正确执行"""
         # Arrange
-        from crawl4ai_mcp.fastmcp_server import crawl_batch
+        from crawl4ai_mcp.fastmcp_server import _crawler
         urls = ["https://example.com"]
 
         async def mock_crawl_batch(urls, concurrent):
             return [{"success": True, "markdown": "# Test", "title": "Test"}]
 
         # Act
-        with patch("crawl4ai_mcp.fastmcp_server.Crawler") as MockCrawler:
-            mock_instance = MockCrawler.return_value
-            mock_instance.crawl_batch = mock_crawl_batch
-            result = crawl_batch(urls)
+        with patch.object(_crawler, "crawl_batch", side_effect=mock_crawl_batch):
+            tool = mcp._tool_manager._tools.get("crawl_batch")
+            result = await tool.fn(urls)
 
         # Assert
         assert len(result) == 1

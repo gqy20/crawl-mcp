@@ -1,0 +1,68 @@
+"""FastMCP 服务器实现"""
+
+from typing import List, Dict, Any
+from fastmcp import FastMCP
+from crawl4ai_mcp.crawler import Crawler
+
+# 创建 FastMCP 实例
+mcp = FastMCP(name="crawl-mcp")
+
+# 创建爬虫实例（单例）
+_crawler = Crawler()
+
+
+@mcp.tool
+def crawl_single(url: str, enhanced: bool = False) -> Dict[str, Any]:
+    """
+    爬取单个网页，返回 Markdown 格式内容
+
+    Args:
+        url: 要爬取的网页 URL
+        enhanced: 是否使用增强模式（适用于 SPA 网站）
+
+    Returns:
+        包含 success, markdown, title, error 的字典
+    """
+    return _crawler.crawl_single(url, enhanced)
+
+
+@mcp.tool
+def crawl_site(
+    url: str,
+    depth: int = 2,
+    pages: int = 10,
+    concurrent: int = 3
+) -> Dict[str, Any]:
+    """
+    爬取整个网站，支持深度和页面数限制
+
+    Args:
+        url: 起始 URL
+        depth: 最大爬取深度（默认：2）
+        pages: 最大页面数（默认：10）
+        concurrent: 并发请求数（默认：3）
+
+    Returns:
+        包含 successful_pages, total_pages, success_rate, results 的字典
+    """
+    return _crawler.crawl_site(url, depth, pages, concurrent)
+
+
+@mcp.tool
+def crawl_batch(urls: List[str], concurrent: int = 3) -> List[Dict[str, Any]]:
+    """
+    批量爬取多个网页
+
+    Args:
+        urls: URL 列表
+        concurrent: 并发请求数（默认：3）
+
+    Returns:
+        爬取结果列表
+    """
+    return _crawler.crawl_batch(urls, concurrent)
+
+
+# CLI 入口点
+if __name__ == "__main__":
+    mcp.run()

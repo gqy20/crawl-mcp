@@ -86,25 +86,51 @@ class Crawler:
             )
             config.extraction_strategy = extraction_strategy
 
-        async with AsyncWebCrawler(verbose=False) as crawler:
-            result = await crawler.arun(url=url, config=config)
+        # 重试机制：最多重试 3 次，只对网络错误重试
+        max_retries = 3
+        last_error = None
 
-            response = {
-                "success": result.success,
-                "markdown": result.markdown.raw_markdown if result.success else "",
-                "title": result.metadata.get('title', '') if result.success else '',
-                "error": result.error_message if not result.success else None,
-            }
+        for attempt in range(max_retries + 1):  # +1 因为第一次不是重试
+            try:
+                async with AsyncWebCrawler(verbose=False) as crawler:
+                    result = await crawler.arun(url=url, config=config)
 
-            # 如果使用了 LLM 提取，添加结果
-            if llm_config and result.success and result.extracted_content:
-                try:
-                    import json
-                    response["llm_result"] = json.loads(result.extracted_content)
-                except (json.JSONDecodeError, TypeError):
-                    response["llm_result"] = {"raw": result.extracted_content}
+                    response = {
+                        "success": result.success,
+                        "markdown": result.markdown.raw_markdown if result.success else "",
+                        "title": result.metadata.get('title', '') if result.success else '',
+                        "error": result.error_message if not result.success else None,
+                    }
 
-            return response
+                    # 如果使用了 LLM 提取，添加结果
+                    if llm_config and result.success and result.extracted_content:
+                        try:
+                            import json
+                            response["llm_result"] = json.loads(result.extracted_content)
+                        except (json.JSONDecodeError, TypeError):
+                            response["llm_result"] = {"raw": result.extracted_content}
+
+                    return response
+
+            except Exception as e:
+                last_error = e
+                error_msg = str(e)
+
+                # 只对 ERR_NETWORK_CHANGED 相关错误重试
+                is_network_error = (
+                    "ERR_NETWORK_CHANGED" in error_msg or
+                    "ERR_INTERNET_DISCONNECTED" in error_msg or
+                    "ERR_CONNECTION_RESET" in error_msg or
+                    "ERR_TIMED_OUT" in error_msg
+                )
+
+                # 如果是网络错误且还有重试次数，等待后重试
+                if is_network_error and attempt < max_retries:
+                    await asyncio.sleep(2 ** attempt)  # 指数退避: 1s, 2s, 4s
+                    continue
+
+                # 其他错误或重试用尽，抛出异常
+                raise
 
     def crawl_single(
         self,

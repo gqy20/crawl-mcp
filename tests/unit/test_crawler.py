@@ -1,10 +1,8 @@
 """Crawler 类单元测试"""
 
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 from crawl4ai_mcp.crawler import Crawler
-from crawl4ai_mcp.llm_config import LLMConfig
 
 
 class TestCrawlerSingle:
@@ -26,7 +24,7 @@ class TestCrawlerSingle:
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:
+        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
             result = crawler.crawl_single(url, enhanced=False)
 
         # Assert
@@ -50,7 +48,7 @@ class TestCrawlerSingle:
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:
+        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
             result = crawler.crawl_single(url, enhanced=True)
 
         # Assert
@@ -116,7 +114,7 @@ class TestCrawlerSite:
         }
 
         # Act
-        with patch.object(crawler, '_crawl_site', return_value=mock_stats) as mock_crawl:
+        with patch.object(crawler, '_crawl_site', return_value=mock_stats) as mock_crawl:  # noqa: F841
             result = crawler.crawl_site(url, depth=3, pages=50, concurrent=5)
 
         # Assert

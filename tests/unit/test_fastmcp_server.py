@@ -1,7 +1,7 @@
 """FastMCP 服务器单元测试"""
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 from crawl4ai_mcp.fastmcp_server import mcp
 
 

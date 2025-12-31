@@ -139,7 +139,6 @@ class Crawler:
 
         # 重试机制：最多重试 3 次，只对网络错误重试
         max_retries = 3
-        last_error = None
 
         for attempt in range(max_retries + 1):  # +1 因为第一次不是重试
             try:
@@ -164,7 +163,6 @@ class Crawler:
                     return response
 
             except Exception as e:
-                last_error = e
                 error_msg = str(e)
 
                 # 只对 ERR_NETWORK_CHANGED 相关错误重试

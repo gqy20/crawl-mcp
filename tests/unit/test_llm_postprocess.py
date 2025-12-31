@@ -1,7 +1,7 @@
 """LLM 后处理功能测试 - 对已爬取的 Markdown 进行处理"""
 
 import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from crawl4ai_mcp.crawler import Crawler
 
 
@@ -105,7 +105,7 @@ class TestCrawlSingleWithPostProcess:
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:
+        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
             result = crawler.crawl_single(url, enhanced=False, llm_config=None)
 
         # Assert

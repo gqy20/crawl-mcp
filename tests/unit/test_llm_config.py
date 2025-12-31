@@ -1,6 +1,5 @@
 """LLM 配置模块的单元测试"""
 
-import os
 import pytest
 from crawl4ai_mcp.llm_config import LLMConfig, get_llm_config, get_default_llm_config
 

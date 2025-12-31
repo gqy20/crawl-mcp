@@ -1,0 +1,67 @@
+"""LLM 配置模块 - 管理 LLM API 密钥和模型配置"""
+
+import os
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+
+@dataclass
+class LLMConfig:
+    """LLM 配置类
+
+    支持兼容 OpenAI API 格式的各种服务商
+    """
+    api_key: str
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    instruction: str = ""
+    schema: Optional[Dict[str, Any]] = None
+
+
+def get_default_llm_config() -> LLMConfig:
+    """从环境变量获取默认 LLM 配置
+
+    环境变量:
+        OPENAI_API_KEY: API 密钥（必需）
+        OPENAI_BASE_URL: API 基础 URL（可选）
+        LLM_MODEL: 模型名称（可选）
+
+    Returns:
+        LLMConfig 实例
+
+    Raises:
+        ValueError: 如果 OPENAI_API_KEY 未设置
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is required")
+
+    return LLMConfig(
+        api_key=api_key,
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
+        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+    )
+
+
+def get_llm_config(config: Optional[Dict[str, Any]]) -> LLMConfig:
+    """合并用户配置和环境变量默认值
+
+    Args:
+        config: 用户提供的配置字典，可以为 None
+
+    Returns:
+        LLMConfig 实例
+    """
+    default = get_default_llm_config()
+
+    if config is None:
+        return default
+
+    # 用户配置覆盖环境变量默认值
+    return LLMConfig(
+        api_key=config.get("api_key", default.api_key),
+        base_url=config.get("base_url", default.base_url),
+        model=config.get("model", default.model),
+        instruction=config.get("instruction", ""),
+        schema=config.get("schema"),
+    )

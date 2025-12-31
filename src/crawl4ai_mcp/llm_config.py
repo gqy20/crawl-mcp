@@ -1,7 +1,7 @@
 """LLM 配置模块 - 管理 LLM API 密钥和模型配置"""
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 

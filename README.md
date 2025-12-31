@@ -6,8 +6,8 @@
 
 - **crawl_single** - 爬取单个网页，返回 Markdown 格式
 - **crawl_site** - 递归爬取整个网站
-- **crawl_batch** - 批量爬取多个网页
-- **LLM 集成** - 支持 AI 驱动的内容提取和摘要
+- **crawl_batch** - 批量爬取多个网页（异步并行）
+- **LLM 集成** - AI 驱动的内容提取和摘要
 - **自动重试** - 网络错误自动重试（指数退避）
 
 ## 安装
@@ -44,52 +44,9 @@ pip install crawl-mcp
 | `OPENAI_BASE_URL` | API 基础 URL | `https://api.openai.com/v1` |
 | `LLM_MODEL` | 模型名称 | `gpt-4o-mini` |
 
-## 可用工具
-
-### crawl_single
-
-```json
-{
-  "tool": "crawl_single",
-  "arguments": {
-    "url": "https://example.com",
-    "enhanced": false,
-    "llm_config": {
-      "instruction": "总结页面内容"
-    }
-  }
-}
-```
-
-### crawl_site
-
-```json
-{
-  "tool": "crawl_site",
-  "arguments": {
-    "url": "https://example.com",
-    "depth": 2,
-    "pages": 10,
-    "concurrent": 3
-  }
-}
-```
-
-### crawl_batch
-
-```json
-{
-  "tool": "crawl_batch",
-  "arguments": {
-    "urls": ["https://example.com/1", "https://example.com/2"],
-    "concurrent": 3
-  }
-}
-```
-
 ## LLM 配置
 
-所有工具支持可选的 `llm_config` 参数，用于 AI 驱动的内容提取：
+所有工具支持可选的 `llm_config` 参数：
 
 ```json
 {
@@ -104,30 +61,18 @@ pip install crawl-mcp
 }
 ```
 
-**参数说明**：
-- `instruction`: 提取指令，告诉 LLM 需要提取什么内容
-- `schema`: 可选的 JSON Schema，用于结构化输出
+- `instruction`: 提取指令
+- `schema`: 可选的 JSON Schema
 
-**注意**：`api_key`、`base_url`、`model` 从环境变量读取，无需在调用时传入。
+**注意**: `api_key`、`base_url`、`model` 从环境变量读取。
 
 ## 开发
 
 ```bash
-# 安装依赖
 uv sync
-
-# 运行测试
 uv run pytest
-
-# 启动 HTTP 服务器
 uv run python -m crawl4ai_mcp.fastmcp_server --http
 ```
-
-## 依赖
-
-- Python 3.12+
-- crawl4ai >= 0.7.8
-- FastMCP >= 0.1.0
 
 ## 许可证
 

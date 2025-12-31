@@ -69,13 +69,13 @@ class TestGetDefaultLLMConfig:
 class TestGetLLMConfig:
     """测试合并配置"""
 
-    def test_get_llm_config_with_dict(self, monkeypatch):
-        """测试从字典创建配置，合并环境变量默认值"""
+    def test_get_llm_config_with_instruction(self, monkeypatch):
+        """测试添加 instruction 参数"""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-env-key")
 
-        config = get_llm_config({"model": "custom-model"})
+        config = get_llm_config({"instruction": "总结内容"})
         assert config.api_key == "sk-env-key"  # 从环境变量
-        assert config.model == "custom-model"  # 从参数
+        assert config.instruction == "总结内容"  # 从参数
 
     def test_get_llm_config_with_none_uses_defaults(self, monkeypatch):
         """测试传入 None 时使用环境变量默认值"""
@@ -83,12 +83,15 @@ class TestGetLLMConfig:
 
         config = get_llm_config(None)
         assert config.api_key == "sk-env-key"
+        assert config.instruction == ""
+        assert config.schema is None
 
-    def test_get_llm_config_dict_overrides_env(self, monkeypatch):
-        """测试字典参数覆盖环境变量"""
+    def test_get_llm_config_with_schema(self, monkeypatch):
+        """测试添加 schema 参数"""
         monkeypatch.setenv("OPENAI_API_KEY", "sk-env-key")
-        monkeypatch.setenv("LLM_MODEL", "env-model")
 
-        config = get_llm_config({"api_key": "sk-dict-key", "model": "dict-model"})
-        assert config.api_key == "sk-dict-key"
-        assert config.model == "dict-model"
+        schema = {"type": "object", "properties": {"name": {"type": "string"}}}
+        config = get_llm_config({"schema": schema, "instruction": "提取"})
+        assert config.api_key == "sk-env-key"
+        assert config.schema == schema
+        assert config.instruction == "提取"

@@ -1,19 +1,33 @@
 [project]
 name = "crawl_mcp"
 version = "0.1.0"
-description = "基于 crawl4ai 的 MCP 服务器，提供单页、整站、批量网页爬取功能"
+description = "基于 crawl4ai 和 FastMCP 的 MCP 服务器，提供网页爬取和 AI 分析功能"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.13.5",
     "crawl4ai>=0.7.8",
-    "lxml>=5.4.0",
     "fastmcp>=0.1.0",
     "nest-asyncio>=1.6.0",
+    "openai>=2.0.0",
+]
+authors = [
+    {name = "gqy20"}
+]
+license = {text = "MIT"}
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
 ]
 
-[project.scripts]
-crawl4ai = "main:main"
+[project.urls]
+Homepage = "https://github.com/gqy20/crawl-mcp"
+Repository = "https://github.com/gqy20/crawl-mcp"
+Issues = "https://github.com/gqy20/crawl-mcp/issues"
 
 [project.entry-points."mcp.servers"]
 crawl-mcp = "crawl4ai_mcp.fastmcp_server:mcp"

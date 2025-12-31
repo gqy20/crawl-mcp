@@ -65,4 +65,10 @@ def crawl_batch(urls: List[str], concurrent: int = 3) -> List[Dict[str, Any]]:
 
 # CLI 入口点
 if __name__ == "__main__":
-    mcp.run()
+    import sys
+
+    # 默认使用 STDIO，但支持通过参数指定 HTTP
+    if "--http" in sys.argv:
+        mcp.run(transport="http", host="0.0.0.0", port=8001)
+    else:
+        mcp.run()

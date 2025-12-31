@@ -166,85 +166,46 @@ class TestCrawlerBatch:
         assert results == []
 
 
-class TestCrawlerLLMIntegration:
-    """测试 LLM 集成功能"""
-
-    @pytest.mark.asyncio
-    async def test_crawl_single_with_llm_config(self):
-        """测试带 LLM 配置的单页爬取"""
-        # Arrange
-        crawler = Crawler()
-        url = "https://example.com"
-        llm_config = {
-            "api_key": "sk-test",
-            "model": "gpt-4o-mini",
-            "instruction": "Summarize this page"
-        }
-
-        async def mock_crawl_impl(url, enhanced, llm_config=None):
-            return {
-                "success": True,
-                "markdown": "# Summary\n\nThis is a summary",
-                "title": "Example Domain",
-                "error": None,
-                "llm_result": {"summary": "Page summary"}
-            }
-
-        # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:
-            result = crawler.crawl_single(url, enhanced=False, llm_config=llm_config)
-
-        # Assert
-        assert result["success"] is True
-        assert result["llm_result"] == {"summary": "Page summary"}
-        # 验证调用参数（位置参数）
-        assert mock_crawl.call_args[0] == (url, False, llm_config)
-
-    @pytest.mark.asyncio
-    async def test_crawl_single_without_llm_config(self):
-        """测试不带 LLM 配置的单页爬取"""
-        # Arrange
-        crawler = Crawler()
-        url = "https://example.com"
-
-        async def mock_crawl_impl(url, enhanced, llm_config=None):
-            return {
-                "success": True,
-                "markdown": "# Content\n\nRaw content",
-                "title": "Example Domain",
-                "error": None
-            }
-
-        # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:
-            result = crawler.crawl_single(url)
-
-        # Assert
-        assert result["success"] is True
-        assert "llm_result" not in result
-        # 验证调用参数（位置参数）
-        assert mock_crawl.call_args[0] == (url, False, None)
+class TestCrawlerBatchLLMIntegration:
+    """测试批量爬取的 LLM 后处理功能"""
 
     @pytest.mark.asyncio
     async def test_crawl_batch_with_llm_config(self):
-        """测试带 LLM 配置的批量爬取"""
+        """测试带 LLM 配置的批量爬取 - 新设计：先爬取后处理"""
         # Arrange
         crawler = Crawler()
-        urls = ["https://example.com/page1"]
-        llm_config = {"instruction": "Extract products"}
+        urls = ["https://example.com/page1", "https://example.com/page2"]
+        llm_config = {"instruction": "提取标题"}
 
-        async def mock_batch_impl(urls, concurrent=3, llm_config=None):
-            return [
-                {"success": True, "markdown": "Product info", "llm_result": {"products": []}}
+        # Act - Mock _call_llm 来测试 LLM 后处理逻辑
+        with patch.object(crawler, '_call_llm') as mock_llm:
+            # 模拟 LLM 返回结构化数据
+            mock_llm.side_effect = [
+                {"success": True, "data": {"title": "Page 1"}},
+                {"success": True, "data": {"title": "Page 2"}},
             ]
 
-        # Act
-        with patch.object(crawler, '_crawl_batch', side_effect=mock_batch_impl) as mock_batch:
-            results = crawler.crawl_batch(urls, llm_config=llm_config)
+            # 同时需要 mock 底层爬取，避免实际网络请求
+            mock_results = [
+                MagicMock(success=True, markdown=MagicMock(raw_markdown="# Page 1\n\nContent 1"), metadata={'title': 'Page 1'}),
+                MagicMock(success=True, markdown=MagicMock(raw_markdown="# Page 2\n\nContent 2"), metadata={'title': 'Page 2'}),
+            ]
+
+            async def mock_arun_many(*args, **kwargs):
+                return mock_results
+
+            with patch('crawl4ai_mcp.crawler.AsyncWebCrawler') as mock_crawler_class:
+                mock_crawler = MagicMock()
+                mock_crawler.arun_many = mock_arun_many
+                mock_crawler_class.return_value.__aenter__.return_value = mock_crawler
+
+                results = crawler.crawl_batch(urls, llm_config=llm_config)
 
         # Assert
-        assert len(results) == 1
-        assert "llm_result" in results[0]
-        # 验证 _crawl_batch 被调用，且参数包含 llm_config
-        assert mock_batch.called
-        assert mock_batch.call_args.kwargs.get("llm_config") == llm_config
+        assert len(results) == 2
+        assert results[0]["success"] is True
+        assert results[0]["markdown"] == "# Page 1\n\nContent 1"  # 原始 Markdown
+        assert results[0]["llm_data"]["title"] == "Page 1"  # LLM 处理结果
+        assert results[1]["llm_data"]["title"] == "Page 2"
+        # 验证 _call_llm 被调用了两次（每个成功页面一次）
+        assert mock_llm.call_count == 2

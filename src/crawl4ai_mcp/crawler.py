@@ -396,6 +396,8 @@ class Crawler:
         """
         内部批量爬取方法 - 使用 arun_many 实现真正的异步并行
 
+        新设计：先快速爬取所有页面，然后对成功的页面进行 LLM 后处理
+
         Args:
             urls: URL 列表
             concurrent: 并发数
@@ -408,11 +410,9 @@ class Crawler:
             return []
 
         from crawl4ai.async_dispatcher import SemaphoreDispatcher
-        import json
 
-        # 创建配置（包含 LLM 策略）
+        # 创建配置（不包含 LLM 策略，保持快速爬取）
         config = self._create_config(enhanced=False)
-        config = self._add_llm_strategy(config, llm_config)
 
         # 创建并发控制器
         dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
@@ -434,15 +434,26 @@ class Crawler:
                 "title": r.metadata.get('title', '') if r.success else '',
                 "error": r.error_message if not r.success else None,
             }
-
-            # 如果使用了 LLM 提取，添加结果
-            if llm_config and r.success and r.extracted_content:
-                try:
-                    response["llm_result"] = json.loads(r.extracted_content)
-                except (json.JSONDecodeError, TypeError):
-                    response["llm_result"] = {"raw": r.extracted_content}
-
             formatted_results.append(response)
+
+        # 第二阶段：如果有 LLM 配置，对成功的页面进行后处理
+        parsed_llm_config = _parse_llm_config(llm_config)
+        if parsed_llm_config and parsed_llm_config.get("instruction"):
+            instruction = parsed_llm_config["instruction"]
+            schema = parsed_llm_config.get("schema")
+
+            for i, result in enumerate(formatted_results):
+                if result["success"]:
+                    llm_result = self._call_llm(result["markdown"], instruction, schema)
+                    if llm_result.get("success"):
+                        if "summary" in llm_result:
+                            result["llm_summary"] = llm_result["summary"]
+                        if "data" in llm_result:
+                            result["llm_data"] = llm_result["data"]
+                        if "content" in llm_result:
+                            result["llm_content"] = llm_result["content"]
+                    else:
+                        result["llm_error"] = llm_result.get("error", "Unknown error")
 
         return formatted_results
 

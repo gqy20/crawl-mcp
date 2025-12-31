@@ -22,13 +22,10 @@ def crawl_single(
 
     Args:
         url: 要爬取的网页 URL
-        enhanced: 是否使用增强模式（适用于 SPA 网站）
-        llm_config: LLM 配置（可选），支持:
-            - api_key: API 密钥（默认从环境变量 OPENAI_API_KEY 获取）
-            - base_url: API 基础 URL（默认: https://api.openai.com/v1）
-            - model: 模型名称（默认: gpt-4o-mini）
-            - instruction: 提示词
-            - schema: JSON Schema 用于结构化提取
+        enhanced: 是否使用增强模式（适用于 SPA 网站，等待时间更长）
+        llm_config: LLM 配置（可选），用于 AI 驱动的内容提取:
+            - instruction: 提取指令，如 "总结页面内容" 或 "提取产品信息"
+            - schema: 可选的 JSON Schema，用于结构化输出
 
     Returns:
         包含 success, markdown, title, error, (可选) llm_result 的字典
@@ -45,7 +42,7 @@ def crawl_site(
     llm_config: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
-    爬取整个网站，支持深度和页面数限制
+    递归爬取整个网站
 
     Args:
         url: 起始 URL
@@ -67,7 +64,7 @@ def crawl_batch(
     llm_config: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
-    批量爬取多个网页
+    批量爬取多个网页（真正的异步并行执行）
 
     Args:
         urls: URL 列表

@@ -11,6 +11,7 @@ class LLMConfig:
 
     支持兼容 OpenAI API 格式的各种服务商
     """
+
     api_key: str
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"

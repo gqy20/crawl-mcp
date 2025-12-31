@@ -7,6 +7,7 @@ from crawl4ai_mcp.crawler import Crawler
 # 读取包版本
 try:
     from importlib.metadata import version as get_version
+
     __version__ = get_version("crawl_mcp")
 except Exception:
     __version__ = "0.1.0"
@@ -22,7 +23,7 @@ _crawler = Crawler()
 def crawl_single(
     url: str,
     enhanced: bool = False,
-    llm_config: Optional[Union[Dict[str, Any], str]] = None
+    llm_config: Optional[Union[Dict[str, Any], str]] = None,
 ) -> Dict[str, Any]:
     """
     爬取单个网页，返回 Markdown 格式内容
@@ -47,7 +48,7 @@ def crawl_site(
     depth: int = 2,
     pages: int = 10,
     concurrent: int = 3,
-    llm_config: Optional[Union[Dict[str, Any], str]] = None
+    llm_config: Optional[Union[Dict[str, Any], str]] = None,
 ) -> Dict[str, Any]:
     """
     递归爬取整个网站
@@ -69,7 +70,7 @@ def crawl_site(
 def crawl_batch(
     urls: List[str],
     concurrent: int = 3,
-    llm_config: Optional[Union[Dict[str, Any], str]] = None
+    llm_config: Optional[Union[Dict[str, Any], str]] = None,
 ) -> List[Dict[str, Any]]:
     """
     批量爬取多个网页（异步并行）

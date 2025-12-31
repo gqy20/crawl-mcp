@@ -14,7 +14,7 @@ class TestLLMConfig:
             base_url="https://api.example.com/v1",
             model="test-model",
             instruction="Extract product info",
-            schema={"type": "object", "properties": {}}
+            schema={"type": "object", "properties": {}},
         )
         assert config.api_key == "sk-test"
         assert config.base_url == "https://api.example.com/v1"
@@ -50,7 +50,9 @@ class TestGetDefaultLLMConfig:
         """测试缺少 API_KEY 时抛出异常"""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        with pytest.raises(ValueError, match="OPENAI_API_KEY environment variable is required"):
+        with pytest.raises(
+            ValueError, match="OPENAI_API_KEY environment variable is required"
+        ):
             get_default_llm_config()
 
     def test_get_default_llm_config_fallback_values(self, monkeypatch):

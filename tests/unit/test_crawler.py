@@ -20,11 +20,11 @@ class TestCrawlerSingle:
                 "success": True,
                 "markdown": "# Example\n\nContent here",
                 "title": "Example Domain",
-                "error": None
+                "error": None,
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
+        with patch.object(crawler, "_crawl", side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
             result = crawler.crawl_single(url, enhanced=False)
 
         # Assert
@@ -44,11 +44,11 @@ class TestCrawlerSingle:
                 "success": True,
                 "markdown": "# SPA Content",
                 "title": "SPA Page",
-                "error": None
+                "error": None,
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
+        with patch.object(crawler, "_crawl", side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
             result = crawler.crawl_single(url, enhanced=True)
 
         # Assert
@@ -66,11 +66,11 @@ class TestCrawlerSingle:
                 "success": False,
                 "markdown": "",
                 "title": "",
-                "error": "Connection failed"
+                "error": "Connection failed",
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl):
+        with patch.object(crawler, "_crawl", side_effect=mock_crawl_impl):
             result = crawler.crawl_single(url, enhanced=False)
 
         # Assert
@@ -87,14 +87,10 @@ class TestCrawlerSite:
         crawler = Crawler()
         url = "https://example.com"
 
-        mock_stats = {
-            "successful_pages": 5,
-            "total_pages": 5,
-            "success_rate": "100%"
-        }
+        mock_stats = {"successful_pages": 5, "total_pages": 5, "success_rate": "100%"}
 
         # Act
-        with patch.object(crawler, '_crawl_site', return_value=mock_stats):
+        with patch.object(crawler, "_crawl_site", return_value=mock_stats):
             result = crawler.crawl_site(url, depth=2, pages=10, concurrent=3)
 
         # Assert
@@ -107,14 +103,12 @@ class TestCrawlerSite:
         crawler = Crawler()
         url = "https://example.com"
 
-        mock_stats = {
-            "successful_pages": 20,
-            "total_pages": 20,
-            "success_rate": "100%"
-        }
+        mock_stats = {"successful_pages": 20, "total_pages": 20, "success_rate": "100%"}
 
         # Act
-        with patch.object(crawler, '_crawl_site', return_value=mock_stats) as mock_crawl:  # noqa: F841
+        with patch.object(
+            crawler, "_crawl_site", return_value=mock_stats
+        ) as mock_crawl:  # noqa: F841
             result = crawler.crawl_site(url, depth=3, pages=50, concurrent=5)
 
         # Assert
@@ -133,17 +127,17 @@ class TestCrawlerBatch:
         urls = [
             "https://example.com/page1",
             "https://example.com/page2",
-            "https://example.com/page3"
+            "https://example.com/page3",
         ]
 
         mock_results = [
             {"success": True, "markdown": "Content 1"},
             {"success": True, "markdown": "Content 2"},
-            {"success": True, "markdown": "Content 3"}
+            {"success": True, "markdown": "Content 3"},
         ]
 
         # Act
-        with patch.object(crawler, '_crawl_batch', return_value=mock_results):
+        with patch.object(crawler, "_crawl_batch", return_value=mock_results):
             results = crawler.crawl_batch(urls, concurrent=3)
 
         # Assert
@@ -176,7 +170,7 @@ class TestCrawlerBatchLLMIntegration:
         llm_config = {"instruction": "提取标题"}
 
         # Act - Mock _call_llm 来测试 LLM 后处理逻辑
-        with patch.object(crawler, '_call_llm') as mock_llm:
+        with patch.object(crawler, "_call_llm") as mock_llm:
             # 模拟 LLM 返回结构化数据
             mock_llm.side_effect = [
                 {"success": True, "data": {"title": "Page 1"}},
@@ -185,14 +179,22 @@ class TestCrawlerBatchLLMIntegration:
 
             # 同时需要 mock 底层爬取，避免实际网络请求
             mock_results = [
-                MagicMock(success=True, markdown=MagicMock(raw_markdown="# Page 1\n\nContent 1"), metadata={'title': 'Page 1'}),
-                MagicMock(success=True, markdown=MagicMock(raw_markdown="# Page 2\n\nContent 2"), metadata={'title': 'Page 2'}),
+                MagicMock(
+                    success=True,
+                    markdown=MagicMock(raw_markdown="# Page 1\n\nContent 1"),
+                    metadata={"title": "Page 1"},
+                ),
+                MagicMock(
+                    success=True,
+                    markdown=MagicMock(raw_markdown="# Page 2\n\nContent 2"),
+                    metadata={"title": "Page 2"},
+                ),
             ]
 
             async def mock_arun_many(*args, **kwargs):
                 return mock_results
 
-            with patch('crawl4ai_mcp.crawler.AsyncWebCrawler') as mock_crawler_class:
+            with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_crawler_class:
                 mock_crawler = MagicMock()
                 mock_crawler.arun_many = mock_arun_many
                 mock_crawler_class.return_value.__aenter__.return_value = mock_crawler

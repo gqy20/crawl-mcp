@@ -15,6 +15,7 @@ def _run_async(coro):
     try:
         asyncio.get_running_loop()
         import nest_asyncio
+
         nest_asyncio.apply()
         return asyncio.get_event_loop().run_until_complete(coro)
     except RuntimeError:
@@ -48,6 +49,7 @@ def _parse_llm_config(llm_config: Optional[Dict[str, Any]]) -> Optional[Dict[str
     # 如果是字符串，尝试解析
     if isinstance(llm_config, str):
         import json
+
         try:
             # 尝试解析为 JSON 对象
             return json.loads(llm_config)
@@ -78,9 +80,7 @@ class Crawler:
         )
 
     def _add_llm_strategy(
-        self,
-        config: CrawlerRunConfig,
-        llm_config: Optional[Dict[str, Any]]
+        self, config: CrawlerRunConfig, llm_config: Optional[Dict[str, Any]]
     ) -> CrawlerRunConfig:
         """
         为配置添加 LLM 提取策略
@@ -121,7 +121,7 @@ class Crawler:
         self,
         url: str,
         enhanced: bool = False,
-        llm_config: Optional[Dict[str, Any]] = None
+        llm_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         内部异步爬取方法
@@ -147,8 +147,12 @@ class Crawler:
 
                     response = {
                         "success": result.success,
-                        "markdown": result.markdown.raw_markdown if result.success else "",
-                        "title": result.metadata.get('title', '') if result.success else '',
+                        "markdown": result.markdown.raw_markdown
+                        if result.success
+                        else "",
+                        "title": result.metadata.get("title", "")
+                        if result.success
+                        else "",
                         "error": result.error_message if not result.success else None,
                     }
 
@@ -156,7 +160,10 @@ class Crawler:
                     if llm_config and result.success and result.extracted_content:
                         try:
                             import json
-                            response["llm_result"] = json.loads(result.extracted_content)
+
+                            response["llm_result"] = json.loads(
+                                result.extracted_content
+                            )
                         except (json.JSONDecodeError, TypeError):
                             response["llm_result"] = {"raw": result.extracted_content}
 
@@ -167,25 +174,22 @@ class Crawler:
 
                 # 只对 ERR_NETWORK_CHANGED 相关错误重试
                 is_network_error = (
-                    "ERR_NETWORK_CHANGED" in error_msg or
-                    "ERR_INTERNET_DISCONNECTED" in error_msg or
-                    "ERR_CONNECTION_RESET" in error_msg or
-                    "ERR_TIMED_OUT" in error_msg
+                    "ERR_NETWORK_CHANGED" in error_msg
+                    or "ERR_INTERNET_DISCONNECTED" in error_msg
+                    or "ERR_CONNECTION_RESET" in error_msg
+                    or "ERR_TIMED_OUT" in error_msg
                 )
 
                 # 如果是网络错误且还有重试次数，等待后重试
                 if is_network_error and attempt < max_retries:
-                    await asyncio.sleep(2 ** attempt)  # 指数退避: 1s, 2s, 4s
+                    await asyncio.sleep(2**attempt)  # 指数退避: 1s, 2s, 4s
                     continue
 
                 # 其他错误或重试用尽，抛出异常
                 raise
 
     def _call_llm(
-        self,
-        content: str,
-        instruction: str,
-        schema: Optional[Dict[str, Any]] = None
+        self, content: str, instruction: str, schema: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         调用 LLM 处理文本内容
@@ -206,7 +210,7 @@ class Crawler:
 
         messages = [
             {"role": "system", "content": "你是一个专业的文本处理助手。"},
-            {"role": "user", "content": f"指令：{instruction}\n\n内容：\n{content}"}
+            {"role": "user", "content": f"指令：{instruction}\n\n内容：\n{content}"},
         ]
 
         if schema:
@@ -224,6 +228,7 @@ class Crawler:
             if schema:
                 try:
                     import json
+
                     return {"success": True, "data": json.loads(result_text)}
                 except json.JSONDecodeError:
                     return {"success": True, "content": result_text}
@@ -234,14 +239,11 @@ class Crawler:
             return {
                 "success": False,
                 "error": str(e),
-                "content": content  # 失败时返回原内容
+                "content": content,  # 失败时返回原内容
             }
 
     def postprocess_markdown(
-        self,
-        markdown: str,
-        instruction: str,
-        schema: Optional[Dict[str, Any]] = None
+        self, markdown: str, instruction: str, schema: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
         对 Markdown 内容进行 LLM 后处理
@@ -258,7 +260,7 @@ class Crawler:
             return {
                 "success": True,
                 "original_markdown": markdown,
-                "skipped": "No instruction provided"
+                "skipped": "No instruction provided",
             }
 
         # 直接调用同步的 _call_llm
@@ -268,7 +270,7 @@ class Crawler:
         self,
         url: str,
         enhanced: bool = False,
-        llm_config: Optional[Dict[str, Any]] = None
+        llm_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         爬取单个网页 (同步封装)
@@ -301,9 +303,7 @@ class Crawler:
 
             if instruction:  # 只有有 instruction 时才处理
                 llm_result = self.postprocess_markdown(
-                    crawl_result["markdown"],
-                    instruction,
-                    schema
+                    crawl_result["markdown"], instruction, schema
                 )
 
                 # 将 LLM 结果合并到响应中
@@ -320,11 +320,7 @@ class Crawler:
         return crawl_result
 
     async def _crawl_site(
-        self,
-        url: str,
-        depth: int = 2,
-        pages: int = 10,
-        concurrent: int = 3
+        self, url: str, depth: int = 2, pages: int = 10, concurrent: int = 3
     ) -> Dict[str, Any]:
         """
         内部整站爬取方法
@@ -365,11 +361,7 @@ class Crawler:
         }
 
     def crawl_site(
-        self,
-        url: str,
-        depth: int = 2,
-        pages: int = 10,
-        concurrent: int = 3
+        self, url: str, depth: int = 2, pages: int = 10, concurrent: int = 3
     ) -> Dict[str, Any]:
         """
         爬取整个网站 (同步封装)
@@ -383,13 +375,15 @@ class Crawler:
         Returns:
             爬取统计信息
         """
-        return _run_async(self._crawl_site(url, depth=depth, pages=pages, concurrent=concurrent))
+        return _run_async(
+            self._crawl_site(url, depth=depth, pages=pages, concurrent=concurrent)
+        )
 
     async def _crawl_batch(
         self,
         urls: List[str],
         concurrent: int = 3,
-        llm_config: Optional[Dict[str, Any]] = None
+        llm_config: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         内部批量爬取方法 - 使用 arun_many 实现真正的异步并行
@@ -418,9 +412,7 @@ class Crawler:
         # 使用 arun_many 实现真正的并行爬取
         async with AsyncWebCrawler(verbose=False) as crawler:
             results = await crawler.arun_many(
-                urls=urls,
-                config=config,
-                dispatcher=dispatcher
+                urls=urls, config=config, dispatcher=dispatcher
             )
 
         # 将 CrawlResultContainer 转换为我们的格式
@@ -429,7 +421,7 @@ class Crawler:
             response = {
                 "success": r.success,
                 "markdown": r.markdown.raw_markdown if r.success else "",
-                "title": r.metadata.get('title', '') if r.success else '',
+                "title": r.metadata.get("title", "") if r.success else "",
                 "error": r.error_message if not r.success else None,
             }
             formatted_results.append(response)
@@ -459,7 +451,7 @@ class Crawler:
         self,
         urls: List[str],
         concurrent: int = 3,
-        llm_config: Optional[Dict[str, Any]] = None
+        llm_config: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """
         批量爬取多个网页 (同步封装)
@@ -472,4 +464,6 @@ class Crawler:
         Returns:
             爬取结果列表
         """
-        return _run_async(self._crawl_batch(urls, concurrent=concurrent, llm_config=llm_config))
+        return _run_async(
+            self._crawl_batch(urls, concurrent=concurrent, llm_config=llm_config)
+        )

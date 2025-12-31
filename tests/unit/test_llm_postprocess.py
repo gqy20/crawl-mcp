@@ -17,11 +17,13 @@ class TestLLMPostProcess:
 
         mock_llm_response = {
             "success": True,
-            "summary": "这是一个测试页面，包含一些内容。"
+            "summary": "这是一个测试页面，包含一些内容。",
         }
 
         # Act
-        with patch.object(crawler, '_call_llm', return_value=mock_llm_response) as mock_llm:
+        with patch.object(
+            crawler, "_call_llm", return_value=mock_llm_response
+        ) as mock_llm:
             result = crawler.postprocess_markdown(markdown, instruction)
 
         # Assert
@@ -38,19 +40,16 @@ class TestLLMPostProcess:
         instruction = "提取产品信息"
         schema = {
             "type": "object",
-            "properties": {
-                "product": {"type": "string"},
-                "price": {"type": "string"}
-            }
+            "properties": {"product": {"type": "string"}, "price": {"type": "string"}},
         }
 
         mock_llm_response = {
             "success": True,
-            "data": {"product": "iPhone 15", "price": "$999"}
+            "data": {"product": "iPhone 15", "price": "$999"},
         }
 
         # Act
-        with patch.object(crawler, '_call_llm', return_value=mock_llm_response):
+        with patch.object(crawler, "_call_llm", return_value=mock_llm_response):
             result = crawler.postprocess_markdown(markdown, instruction, schema)
 
         # Assert
@@ -101,11 +100,11 @@ class TestCrawlSingleWithPostProcess:
                 "success": True,
                 "markdown": "# Example\n\nContent",
                 "title": "Example",
-                "error": None
+                "error": None,
             }
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
+        with patch.object(crawler, "_crawl", side_effect=mock_crawl_impl) as mock_crawl:  # noqa: F841
             result = crawler.crawl_single(url, enhanced=False, llm_config=None)
 
         # Assert
@@ -127,18 +126,19 @@ class TestCrawlSingleWithPostProcess:
                 "success": True,
                 "markdown": markdown_content,
                 "title": "Example",
-                "error": None
+                "error": None,
             }
 
         # Mock postprocess_markdown 返回 LLM 处理结果
-        mock_llm_result = {
-            "success": True,
-            "summary": "Page summary"
-        }
+        mock_llm_result = {"success": True, "summary": "Page summary"}
 
         # Act
-        with patch.object(crawler, '_crawl', side_effect=mock_crawl_impl) as mock_crawl, \
-             patch.object(crawler, 'postprocess_markdown', return_value=mock_llm_result) as mock_post:
+        with (
+            patch.object(crawler, "_crawl", side_effect=mock_crawl_impl) as mock_crawl,
+            patch.object(
+                crawler, "postprocess_markdown", return_value=mock_llm_result
+            ) as mock_post,
+        ):
             result = crawler.crawl_single(url, llm_config="总结页面")
 
         # Assert

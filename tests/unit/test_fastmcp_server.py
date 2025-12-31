@@ -28,6 +28,7 @@ class TestFastMCPTools:
         assert tool is not None
         # 验证函数签名
         import inspect
+
         sig = inspect.signature(tool.fn)
         assert "url" in sig.parameters
         assert "enhanced" in sig.parameters
@@ -41,6 +42,7 @@ class TestFastMCPTools:
         # Assert
         assert tool is not None
         import inspect
+
         sig = inspect.signature(tool.fn)
         assert "url" in sig.parameters
         assert "depth" in sig.parameters
@@ -56,6 +58,7 @@ class TestFastMCPTools:
         # Assert
         assert tool is not None
         import inspect
+
         sig = inspect.signature(tool.fn)
         assert "urls" in sig.parameters
         assert "concurrent" in sig.parameters
@@ -70,10 +73,16 @@ class TestFastMCPToolFunctions:
         """测试 crawl_single 函数能正确执行"""
         # Arrange
         from crawl4ai_mcp.fastmcp_server import _crawler
+
         url = "https://example.com"
 
         async def mock_crawl(url, enhanced, llm_config=None):
-            return {"success": True, "markdown": "# Test", "title": "Test", "error": None}
+            return {
+                "success": True,
+                "markdown": "# Test",
+                "title": "Test",
+                "error": None,
+            }
 
         # Act
         with patch.object(_crawler, "crawl_single", side_effect=mock_crawl):
@@ -89,6 +98,7 @@ class TestFastMCPToolFunctions:
         """测试 crawl_site 函数能正确执行"""
         # Arrange
         from crawl4ai_mcp.fastmcp_server import _crawler
+
         url = "https://example.com"
 
         async def mock_crawl_site(url, depth, pages, concurrent, llm_config=None):
@@ -96,7 +106,7 @@ class TestFastMCPToolFunctions:
                 "successful_pages": 1,
                 "total_pages": 1,
                 "success_rate": "100%",
-                "results": []
+                "results": [],
             }
 
         # Act
@@ -112,6 +122,7 @@ class TestFastMCPToolFunctions:
         """测试 crawl_batch 函数能正确执行"""
         # Arrange
         from crawl4ai_mcp.fastmcp_server import _crawler
+
         urls = ["https://example.com"]
 
         async def mock_crawl_batch(urls, concurrent, llm_config=None):

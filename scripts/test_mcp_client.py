@@ -15,7 +15,9 @@ async def main():
         for tool in tools:
             print(f"  - {tool.name}: {tool.description}")
             if tool.inputSchema:
-                print(f"    参数: {list(tool.inputSchema.get('properties', {}).keys())}")
+                print(
+                    f"    参数: {list(tool.inputSchema.get('properties', {}).keys())}"
+                )
 
         print("\n✅ MCP 服务器连接成功！")
 

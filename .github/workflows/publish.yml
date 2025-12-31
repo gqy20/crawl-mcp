@@ -101,3 +101,4 @@ jobs:
           password: ${{ secrets.PYPI_API_TOKEN }}
           verbose: true
           print-hash: true
+          attestations: false

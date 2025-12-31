@@ -31,6 +31,7 @@ class TestFastMCPTools:
         sig = inspect.signature(tool.fn)
         assert "url" in sig.parameters
         assert "enhanced" in sig.parameters
+        assert "llm_config" in sig.parameters
 
     def test_crawl_site_tool_exists(self):
         """测试 crawl_site 工具存在且有正确的 schema"""
@@ -45,6 +46,7 @@ class TestFastMCPTools:
         assert "depth" in sig.parameters
         assert "pages" in sig.parameters
         assert "concurrent" in sig.parameters
+        assert "llm_config" in sig.parameters
 
     def test_crawl_batch_tool_exists(self):
         """测试 crawl_batch 工具存在且有正确的 schema"""
@@ -57,6 +59,7 @@ class TestFastMCPTools:
         sig = inspect.signature(tool.fn)
         assert "urls" in sig.parameters
         assert "concurrent" in sig.parameters
+        assert "llm_config" in sig.parameters
 
 
 class TestFastMCPToolFunctions:
@@ -69,7 +72,7 @@ class TestFastMCPToolFunctions:
         from crawl4ai_mcp.fastmcp_server import _crawler
         url = "https://example.com"
 
-        async def mock_crawl(url, enhanced):
+        async def mock_crawl(url, enhanced, llm_config=None):
             return {"success": True, "markdown": "# Test", "title": "Test", "error": None}
 
         # Act
@@ -88,7 +91,7 @@ class TestFastMCPToolFunctions:
         from crawl4ai_mcp.fastmcp_server import _crawler
         url = "https://example.com"
 
-        async def mock_crawl_site(url, depth, pages, concurrent):
+        async def mock_crawl_site(url, depth, pages, concurrent, llm_config=None):
             return {
                 "successful_pages": 1,
                 "total_pages": 1,
@@ -111,7 +114,7 @@ class TestFastMCPToolFunctions:
         from crawl4ai_mcp.fastmcp_server import _crawler
         urls = ["https://example.com"]
 
-        async def mock_crawl_batch(urls, concurrent):
+        async def mock_crawl_batch(urls, concurrent, llm_config=None):
             return [{"success": True, "markdown": "# Test", "title": "Test"}]
 
         # Act

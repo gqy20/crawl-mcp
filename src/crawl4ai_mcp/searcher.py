@@ -1,25 +1,11 @@
-"""搜索模块 - 基于 duckduckgo-search"""
+"""搜索模块 - 基于 ddgs"""
 
 from typing import Dict, Any, Optional
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 
 class Searcher:
     """搜索类 - 提供网页搜索功能"""
-
-    def __init__(
-        self,
-        proxy: Optional[str] = None,
-        timeout: int = 10,
-    ):
-        """
-        初始化搜索器
-
-        Args:
-            proxy: 代理地址，支持 http/https/socks5
-            timeout: 请求超时时间（秒）
-        """
-        self.ddgs = DDGS(proxy=proxy, timeout=timeout)
 
     def search_text(
         self,
@@ -45,15 +31,7 @@ class Searcher:
             {"success": True/False, "query": "...", "count": N, "results": [...]}
         """
         try:
-            results = list(
-                self.ddgs.text(
-                    keywords=query,
-                    region=region,
-                    safesearch=safesearch,
-                    timelimit=timelimit,
-                    max_results=max_results,
-                )
-            )
+            results = list(DDGS().text(query, max_results=max_results))
             return {
                 "success": True,
                 "query": query,
@@ -92,15 +70,7 @@ class Searcher:
             {"success": True/False, "query": "...", "count": N, "results": [...]}
         """
         try:
-            results = list(
-                self.ddgs.news(
-                    keywords=query,
-                    region=region,
-                    safesearch=safesearch,
-                    timelimit=timelimit,
-                    max_results=max_results,
-                )
-            )
+            results = list(DDGS().news(query, max_results=max_results))
             return {
                 "success": True,
                 "query": query,

@@ -11,7 +11,7 @@ try:
 
     __version__ = get_version("crawl_mcp")
 except Exception:
-    __version__ = "0.1.1"
+    __version__ = "0.1.2"
 
 # 创建 FastMCP 实例
 mcp = FastMCP(name="crawl-mcp", version=__version__)

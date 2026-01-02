@@ -47,7 +47,7 @@ class Searcher:
         try:
             results = list(
                 self.ddgs.text(
-                    query=query,
+                    keywords=query,
                     region=region,
                     safesearch=safesearch,
                     timelimit=timelimit,

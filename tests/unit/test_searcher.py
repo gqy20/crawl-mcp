@@ -53,7 +53,7 @@ class TestSearcherText:
         call_kwargs = mock_text.call_args.kwargs
         assert call_kwargs["timelimit"] == "d"
         assert call_kwargs["max_results"] == 5
-        assert call_kwargs["query"] == "news"
+        assert call_kwargs["keywords"] == "news"
 
     def test_search_text_empty_results(self):
         """测试无搜索结果 - 返回空列表但成功"""

@@ -16,7 +16,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: uv run pytest -q
+        entry: .venv/bin/python -m pytest -q
         language: system
         types: [python]
         pass_filenames: false

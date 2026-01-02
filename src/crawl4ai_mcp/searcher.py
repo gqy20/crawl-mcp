@@ -1,6 +1,6 @@
 """搜索模块 - 基于 duckduckgo-search"""
 
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from duckduckgo_search import DDGS
 
 
@@ -38,7 +38,7 @@ class Searcher:
             query: 搜索关键词
             region: 区域代码 (wt-wt/us-en/cn-zh/jp-jp等)
             safesearch: 安全搜索级别 (on/moderate/off)
-            timelimit: 时间限制 (d=天/w=周/m=月/y=年)
+            timelimit: 时间限制 (d=天/w/周/m/月/y=年)
             max_results: 最大结果数
 
         Returns:
@@ -85,7 +85,7 @@ class Searcher:
             query: 搜索关键词
             region: 区域代码 (同 search_text)
             safesearch: 安全搜索级别 (同 search_text)
-            timelimit: 时间限制 (d=天/w=周/m=月)
+            timelimit: 时间限制 (d=天/w/周/m/月)
             max_results: 最大结果数
 
         Returns:

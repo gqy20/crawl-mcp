@@ -3,6 +3,7 @@
 from typing import List, Dict, Any, Optional, Union
 from fastmcp import FastMCP
 from crawl4ai_mcp.crawler import Crawler
+from crawl4ai_mcp.searcher import Searcher
 
 # 读取包版本
 try:
@@ -17,6 +18,9 @@ mcp = FastMCP(name="crawl-mcp", version=__version__)
 
 # 创建爬虫实例（单例）
 _crawler = Crawler()
+
+# 创建搜索器实例（单例）
+_searcher = Searcher()
 
 
 @mcp.tool
@@ -84,6 +88,88 @@ def crawl_batch(
         爬取结果列表
     """
     return _crawler.crawl_batch(urls, concurrent, llm_config)
+
+
+@mcp.tool
+def search_text(
+    query: str,
+    region: str = "wt-wt",
+    safesearch: str = "moderate",
+    timelimit: Optional[str] = None,
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """
+    搜索网页内容（通用搜索）
+
+    适用于搜索技术文档、百科、博客、论坛、教程等静态内容。
+
+    Args:
+        query: 搜索关键词
+        region: 区域代码
+            - wt-wt: 无区域限制（默认）
+            - us-en: 美国（英语）
+            - cn-zh: 中国（中文）
+            - uk-en: 英国（英语）
+            - jp-jp: 日本（日语）
+        safesearch: 安全搜索 (on/moderate/off)
+        timelimit: 时间限制 (d=天, w=周, m=月, y=年)
+        max_results: 最大结果数（默认：10）
+
+    Returns:
+        包含搜索结果的字典，格式：
+        {
+            "success": True,
+            "query": "搜索关键词",
+            "count": 5,
+            "results": [
+                {"title": "...", "href": "...", "body": "..."},
+                ...
+            ]
+        }
+    """
+    return _searcher.search_text(query, region, safesearch, timelimit, max_results)
+
+
+@mcp.tool
+def search_news(
+    query: str,
+    region: str = "wt-wt",
+    safesearch: str = "moderate",
+    timelimit: Optional[str] = None,
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """
+    搜索新闻内容
+
+    适用于搜索突发新闻、时事、财经、体育等时效性内容。
+
+    Args:
+        query: 搜索关键词
+        region: 区域代码（同 search_text）
+        safesearch: 安全搜索 (on/moderate/off)
+        timelimit: 时间限制 (d=天, w=周, m=月)
+        max_results: 最大结果数（默认：10）
+
+    Returns:
+        包含新闻搜索结果的字典，格式：
+        {
+            "success": True,
+            "query": "搜索关键词",
+            "count": 3,
+            "results": [
+                {
+                    "date": "2024-07-03T16:25:22+00:00",
+                    "title": "...",
+                    "body": "...",
+                    "url": "...",
+                    "image": "...",
+                    "source": "..."
+                },
+                ...
+            ]
+        }
+    """
+    return _searcher.search_news(query, region, safesearch, timelimit, max_results)
 
 
 def main():

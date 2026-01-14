@@ -429,8 +429,8 @@ class Crawler:
         Returns:
             爬取统计信息
         """
-        # TODO: 整合 async_crawler.py 的 AsyncParallelCrawler 逻辑
-        # 暂时返回模拟结果
+        # TODO: 实现完整的整站爬取逻辑（深度优先/广度优先、URL 去重、并发控制）
+        # 当前简化实现：仅爬取首页
         visited = set()
         results = []
 

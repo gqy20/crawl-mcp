@@ -8,7 +8,7 @@ from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
 
 from ddgs import DDGS
-from openai import OpenAI, AsyncOpenAI
+from openai import AsyncOpenAI
 
 from .llm_config import get_default_llm_config
 
@@ -265,68 +265,6 @@ class Searcher:
             "results": results,
             "output_dir": str(output_path),
         }
-
-    def _analyze_images(
-        self, images: List[Dict[str, str]], prompt: str
-    ) -> Dict[str, Any]:
-        """调用图片分析模型"""
-        results = []
-
-        try:
-            config = get_default_llm_config()
-            # 使用 vision_model 或默认模型
-            model = config.vision_model or "glm-4.6v"
-            client = OpenAI(api_key=config.api_key, base_url=config.base_url)
-        except Exception as e:
-            return {
-                "count": len(images),
-                "error": f"LLM 配置错误: {e}",
-                "results": [],
-            }
-
-        for img in images:
-            try:
-                content = [{"type": "text", "text": prompt}]
-
-                if img["type"] == "url":
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": img["path"]},
-                        }
-                    )
-                else:
-                    # 本地文件需要转 base64
-                    with open(img["path"], "rb") as f:
-                        base64_image = base64.b64encode(f.read()).decode("utf-8")
-                    content.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/jpeg;base64,{base64_image}"
-                            },
-                        }
-                    )
-
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[{"role": "user", "content": content}],
-                )
-
-                results.append(
-                    {
-                        "image": img["path"],
-                        "type": img["type"],
-                        "analysis": response.choices[0].message.content,
-                    }
-                )
-
-            except Exception as e:
-                results.append(
-                    {"image": img["path"], "type": img["type"], "error": str(e)}
-                )
-
-        return {"count": len(images), "results": results}
 
     async def _analyze_images_async(
         self, images: List[Dict[str, str]], prompt: str, max_concurrent: int = 3

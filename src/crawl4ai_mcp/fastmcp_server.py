@@ -172,6 +172,99 @@ def search_news(
     return _searcher.search_news(query, region, safesearch, timelimit, max_results)
 
 
+@mcp.tool
+def search_images(
+    query: str,
+    region: str = "wt-wt",
+    safesearch: str = "moderate",
+    timelimit: Optional[str] = None,
+    max_results: int = 10,
+    size: Optional[str] = None,
+    color: Optional[str] = None,
+    type_image: Optional[str] = None,
+    layout: Optional[str] = None,
+    download: bool = False,
+    download_count: Optional[int] = None,
+    output_dir: str = "./downloads/images",
+    analyze: bool = False,
+    analysis_prompt: str = "详细描述这张图片的内容",
+) -> Dict[str, Any]:
+    """
+    搜索图片（支持下载和分析）
+
+    === 基础搜索 ===
+    query: 搜索关键词
+    max_results: 搜索结果数量（默认：10）
+
+    === 搜索过滤 ===
+    region: 区域代码 (wt-wt/us-en/cn-zh等)
+    size: 图片尺寸 (Small/Medium/Large/Wallpaper)
+    color: 颜色过滤 (如 "Red", "Monochrome")
+    type_image: 类型 (photo/clipart/gif/transparent/line)
+    layout: 布局 (Square/Tall/Wide)
+
+    === 下载选项 ===
+    download: 是否下载到本地（默认：False）
+    download_count: 下载数量（默认：全部）
+    output_dir: 下载目录（默认：./downloads/images）
+
+    === 分析选项 ===
+    analyze: 是否使用图片模型分析（默认：False）
+    analysis_prompt: 分析提示词
+
+    === 返回格式 ===
+    {
+        "success": True,
+        "query": "butterfly",
+        "search_results": {
+            "count": 10,
+            "results": [
+                {
+                    "title": "...",
+                    "image": "https://...",
+                    "thumbnail": "https://...",
+                    "width": 1920,
+                    "height": 1080,
+                    "source": "Bing"
+                },
+                ...
+            ]
+        },
+        "download_results": {          # 仅当 download=True 时
+            "total": 5,
+            "downloaded": 5,
+            "output_dir": "./downloads/images"
+        },
+        "analysis_results": {          # 仅当 analyze=True 时
+            "count": 5,
+            "results": [
+                {
+                    "image": "...",
+                    "type": "local",
+                    "analysis": "这是一张..."
+                }
+            ]
+        }
+    }
+    """
+    return _searcher.search_images(
+        query=query,
+        region=region,
+        safesearch=safesearch,
+        timelimit=timelimit,
+        max_results=max_results,
+        size=size,
+        color=color,
+        type_image=type_image,
+        layout=layout,
+        download=download,
+        download_count=download_count,
+        output_dir=output_dir,
+        analyze=analyze,
+        analysis_prompt=analysis_prompt,
+    )
+
+
 def main():
     """CLI 入口点"""
     import sys

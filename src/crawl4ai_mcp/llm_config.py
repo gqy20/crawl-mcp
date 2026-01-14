@@ -17,6 +17,8 @@ class LLMConfig:
     model: str = "gpt-4o-mini"
     instruction: str = ""
     schema: Optional[Dict[str, Any]] = None
+    # 图片分析模型（可选）
+    vision_model: Optional[str] = None
 
 
 def get_default_llm_config() -> LLMConfig:
@@ -26,6 +28,7 @@ def get_default_llm_config() -> LLMConfig:
         OPENAI_API_KEY: API 密钥（必需）
         OPENAI_BASE_URL: API 基础 URL（可选）
         LLM_MODEL: 模型名称（可选）
+        VISION_MODEL: 图片分析模型名称（可选）
 
     Returns:
         LLMConfig 实例
@@ -40,7 +43,8 @@ def get_default_llm_config() -> LLMConfig:
     return LLMConfig(
         api_key=api_key,
         base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
-        model=os.getenv("LLM_MODEL", "gpt-4o-mini"),
+        model=os.getenv("LLM_MODEL", "glm-4.7"),
+        vision_model=os.getenv("VISION_MODEL", "glm-4.6v"),
     )
 
 

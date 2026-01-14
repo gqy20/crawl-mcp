@@ -12,6 +12,7 @@
 - **crawl_batch** - 批量爬取多个网页（异步并行）
 - **search_text** - 搜索网页内容（通用搜索）
 - **search_news** - 搜索新闻内容
+- **search_images** - 搜索图片（支持下载和分析）
 - **LLM 集成** - AI 驱动的内容提取和摘要（先快速爬取，后可选处理）
 - **自动重试** - 网络错误自动重试（指数退避）
 
@@ -86,7 +87,8 @@ pip install crawl-mcp
 |------|------|--------|
 | `OPENAI_API_KEY` | API 密钥 | *必填* |
 | `OPENAI_BASE_URL` | API 基础 URL | `https://api.openai.com/v1` |
-| `LLM_MODEL` | 模型名称 | `gpt-4o-mini` |
+| `LLM_MODEL` | 文本模型名称 | `glm-4.7` |
+| `VISION_MODEL` | 图片分析模型名称 | `glm-4.6v` |
 
 ## LLM 配置
 
@@ -192,6 +194,85 @@ pip install crawl-mcp
       "source": "..."
     }
   ]
+}
+```
+
+### search_images - 图片搜索
+
+搜索图片，支持下载到本地和 AI 分析。
+
+```json
+{
+  "name": "search_images",
+  "arguments": {
+    "query": "cute cat",
+    "max_results": 10,
+    "download": true,
+    "download_count": 5,
+    "analyze": true,
+    "analysis_prompt": "描述这张图片的内容和风格"
+  }
+}
+```
+
+**参数说明**：
+
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `query` | 搜索关键词 | *必填* |
+| `region` | 区域代码 | `wt-wt` |
+| `max_results` | 搜索结果数量 | `10` |
+| `size` | 图片尺寸 | - |
+| `color` | 颜色过滤 | - |
+| `type_image` | 图片类型 | - |
+| `layout` | 布局方式 | - |
+| `download` | 是否下载到本地 | `false` |
+| `download_count` | 下载数量 | 全部 |
+| `output_dir` | 下载目录 | `./downloads/images` |
+| `analyze` | 是否 AI 分析 | `false` |
+| `analysis_prompt` | 分析提示词 | `详细描述这张图片的内容` |
+
+**图片过滤选项**：
+- `size`: `Small`, `Medium`, `Large`, `Wallpaper`
+- `color`: `Red`, `Orange`, `Yellow`, `Green`, `Blue`, `Purple`, `Pink`, `Black`, `White`, `Gray`, `Brown`, `Monochrome`
+- `type_image`: `photo`, `clipart`, `gif`, `transparent`, `line`
+- `layout`: `Square`, `Tall`, `Wide`
+
+**返回格式**：
+```json
+{
+  "success": true,
+  "query": "cute cat",
+  "search_results": {
+    "count": 10,
+    "results": [
+      {
+        "title": "...",
+        "image": "https://...",
+        "thumbnail": "https://...",
+        "url": "https://...",
+        "width": 1920,
+        "height": 1080,
+        "source": "Bing"
+      }
+    ]
+  },
+  "download_results": {
+    "total": 5,
+    "downloaded": 5,
+    "failed": 0,
+    "output_dir": "./downloads/images"
+  },
+  "analysis_results": {
+    "count": 5,
+    "results": [
+      {
+        "image": "...",
+        "type": "local",
+        "analysis": "这是一张可爱的猫咪图片..."
+      }
+    ]
+  }
 }
 ```
 

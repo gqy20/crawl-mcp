@@ -32,6 +32,9 @@ Thumbs.db
 output/
 *.log
 
+# Environment variables
+.env
+
 # Temporary files
 *.tmp
 *.bak

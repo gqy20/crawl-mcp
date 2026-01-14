@@ -125,7 +125,7 @@ class TestFastMCPToolFunctions:
 
         urls = ["https://example.com"]
 
-        async def mock_crawl_batch(urls, concurrent, llm_config=None):
+        async def mock_crawl_batch(urls, concurrent, llm_config=None, llm_concurrent=3):
             return [{"success": True, "markdown": "# Test", "title": "Test"}]
 
         # Act

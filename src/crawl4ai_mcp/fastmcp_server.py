@@ -75,19 +75,21 @@ def crawl_batch(
     urls: List[str],
     concurrent: int = 3,
     llm_config: Optional[Union[Dict[str, Any], str]] = None,
+    llm_concurrent: int = 3,
 ) -> List[Dict[str, Any]]:
     """
     批量爬取多个网页（异步并行）
 
     Args:
         urls: URL 列表
-        concurrent: 并发请求数（默认：3）
+        concurrent: 网页爬取并发数（默认：3）
         llm_config: LLM 配置（可选），格式同 crawl_single
+        llm_concurrent: LLM 处理并发数（默认：3）
 
     Returns:
         爬取结果列表
     """
-    return _crawler.crawl_batch(urls, concurrent, llm_config)
+    return _crawler.crawl_batch(urls, concurrent, llm_config, llm_concurrent)
 
 
 @mcp.tool
@@ -188,6 +190,7 @@ def search_images(
     output_dir: str = "./downloads/images",
     analyze: bool = False,
     analysis_prompt: str = "详细描述这张图片的内容",
+    analyze_concurrent: int = 3,
 ) -> Dict[str, Any]:
     """
     搜索图片（支持下载和分析）
@@ -211,6 +214,7 @@ def search_images(
     === 分析选项 ===
     analyze: 是否使用图片模型分析（默认：False）
     analysis_prompt: 分析提示词
+    analyze_concurrent: 图片分析并发数（默认：3）
 
     === 返回格式 ===
     {
@@ -262,6 +266,7 @@ def search_images(
         output_dir=output_dir,
         analyze=analyze,
         analysis_prompt=analysis_prompt,
+        analyze_concurrent=analyze_concurrent,
     )
 
 

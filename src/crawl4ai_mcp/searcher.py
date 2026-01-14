@@ -1,5 +1,6 @@
 """搜索模块 - 基于 ddgs"""
 
+import asyncio
 import base64
 import requests
 from pathlib import Path
@@ -7,9 +8,24 @@ from typing import Dict, Any, Optional, List
 from urllib.parse import urlparse
 
 from ddgs import DDGS
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 
 from .llm_config import get_default_llm_config
+
+
+def _run_async(coro):
+    """
+    运行异步函数的辅助函数，兼容已有事件循环的环境
+    使用 nest_asyncio 允许嵌套事件循环
+    """
+    try:
+        asyncio.get_running_loop()
+        import nest_asyncio
+
+        nest_asyncio.apply()
+        return asyncio.get_event_loop().run_until_complete(coro)
+    except RuntimeError:
+        return asyncio.run(coro)
 
 
 class Searcher:
@@ -109,6 +125,7 @@ class Searcher:
         output_dir: str = "./downloads/images",
         analyze: bool = False,
         analysis_prompt: str = "详细描述这张图片的内容",
+        analyze_concurrent: int = 3,
     ) -> Dict[str, Any]:
         """
         图片搜索 + 下载 + 分析（一站式）
@@ -126,6 +143,7 @@ class Searcher:
             output_dir: 下载目录
             analyze: 是否使用图片模型分析
             analysis_prompt: 分析提示词
+            analyze_concurrent: 图片分析并发数（默认：3）
 
         Returns:
             {
@@ -187,7 +205,13 @@ class Searcher:
                 for img in images[:download_count] if download_count else images:
                     images_to_analyze.append({"path": img.get("image"), "type": "url"})
 
-            analysis_result = self._analyze_images(images_to_analyze, analysis_prompt)
+            analysis_result = _run_async(
+                self._analyze_images_async(
+                    images_to_analyze,
+                    analysis_prompt,
+                    max_concurrent=analyze_concurrent,
+                )
+            )
             result["analysis_results"] = analysis_result
 
         return result
@@ -303,6 +327,98 @@ class Searcher:
                 )
 
         return {"count": len(images), "results": results}
+
+    async def _analyze_images_async(
+        self, images: List[Dict[str, str]], prompt: str, max_concurrent: int = 3
+    ) -> Dict[str, Any]:
+        """
+        并行调用图片分析模型
+
+        Args:
+            images: 图片列表，每项包含 path (URL/本地路径) 和 type (url/local)
+            prompt: 分析提示词
+            max_concurrent: 最大并发数
+
+        Returns:
+            {count, results: [{image, type, analysis/error}]}
+        """
+        try:
+            config = get_default_llm_config()
+            model = config.vision_model or "glm-4.6v"
+            client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+        except Exception as e:
+            return {
+                "count": len(images),
+                "error": f"LLM 配置错误: {e}",
+                "results": [],
+            }
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def analyze_single(img: Dict[str, str]) -> Dict[str, Any]:
+            """分析单张图片"""
+            async with semaphore:
+                content = [{"type": "text", "text": prompt}]
+
+                if img["type"] == "url":
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {"url": img["path"]},
+                        }
+                    )
+                else:
+                    # 本地文件需要转 base64
+                    with open(img["path"], "rb") as f:
+                        base64_image = base64.b64encode(f.read()).decode("utf-8")
+                    content.append(
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/jpeg;base64,{base64_image}"
+                            },
+                        }
+                    )
+
+                try:
+                    response = await client.chat.completions.create(
+                        model=model,
+                        messages=[{"role": "user", "content": content}],
+                    )
+
+                    return {
+                        "image": img["path"],
+                        "type": img["type"],
+                        "analysis": response.choices[0].message.content,
+                    }
+
+                except Exception as e:
+                    return {
+                        "image": img["path"],
+                        "type": img["type"],
+                        "error": str(e),
+                    }
+
+        # 并行分析所有图片
+        tasks = [analyze_single(img) for img in images]
+        results = await asyncio.gather(*tasks)
+
+        return {"count": len(images), "results": list(results)}
+
+    def _analyze_images(
+        self, images: List[Dict[str, str]], prompt: str
+    ) -> Dict[str, Any]:
+        """
+        调用图片分析模型（同步包装器，使用并行版本）
+
+        Args:
+            images: 图片列表
+            prompt: 分析提示词
+
+        Returns:
+            分析结果
+        """
+        return _run_async(self._analyze_images_async(images, prompt))
 
     @staticmethod
     def _get_extension(url: str) -> str:

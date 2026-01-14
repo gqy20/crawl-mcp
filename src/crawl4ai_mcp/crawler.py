@@ -4,7 +4,8 @@ import asyncio
 from typing import List, Dict, Any, Optional
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
-from .llm_config import get_llm_config
+from openai import AsyncOpenAI
+from .llm_config import get_llm_config, get_default_llm_config
 
 
 def _run_async(coro):
@@ -242,6 +243,100 @@ class Crawler:
                 "content": content,  # 失败时返回原内容
             }
 
+    async def _call_llm_batch(
+        self,
+        items: List[Dict[str, Any]],
+        instruction: str,
+        schema: Optional[Dict[str, Any]] = None,
+        max_concurrent: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """
+        并行调用 LLM 处理多个文本内容
+
+        Args:
+            items: 要处理的项目列表，每个项目需要包含 'markdown' 字段
+            instruction: 处理指令
+            schema: 可选的 JSON Schema
+            max_concurrent: 最大并发数
+
+        Returns:
+            处理结果列表，每个结果包含 summary 或 error
+        """
+        llm_cfg = get_default_llm_config()
+        client = AsyncOpenAI(api_key=llm_cfg.api_key, base_url=llm_cfg.base_url)
+
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def process_item(item: Dict[str, Any]) -> Dict[str, Any]:
+            """处理单个项目"""
+            async with semaphore:
+                content = item.get("markdown", "")
+
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "你是一个专业的文本处理助手。",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"指令：{instruction}\n\n内容：\n{content}",
+                    },
+                ]
+
+                if schema:
+                    messages[0]["content"] += (
+                        f"\n\n请按照以下 JSON Schema 返回结果：{schema}"
+                    )
+
+                try:
+                    response = await client.chat.completions.create(
+                        model=llm_cfg.model, messages=messages, temperature=0.3
+                    )
+                    result_text = response.choices[0].message.content
+
+                    # 尝试解析为 JSON
+                    if schema:
+                        try:
+                            import json
+
+                            return {"success": True, "data": json.loads(result_text)}
+                        except json.JSONDecodeError:
+                            return {"success": True, "content": result_text}
+                    else:
+                        return {"success": True, "summary": result_text}
+
+                except Exception as e:
+                    return {"success": False, "error": str(e)}
+
+        # 并行处理所有项目
+        tasks = [process_item(item) for item in items]
+        results = await asyncio.gather(*tasks)
+
+        return list(results)
+
+    def _call_llm_batch_sync(
+        self,
+        items: List[Dict[str, Any]],
+        instruction: str,
+        schema: Optional[Dict[str, Any]] = None,
+        max_concurrent: int = 3,
+    ) -> List[Dict[str, Any]]:
+        """
+        并行调用 LLM 处理多个文本内容（同步封装）
+
+        Args:
+            items: 要处理的项目列表
+            instruction: 处理指令
+            schema: 可选的 JSON Schema
+            max_concurrent: 最大并发数
+
+        Returns:
+            处理结果列表
+        """
+        return _run_async(
+            self._call_llm_batch(items, instruction, schema, max_concurrent)
+        )
+
     def postprocess_markdown(
         self, markdown: str, instruction: str, schema: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
@@ -384,6 +479,7 @@ class Crawler:
         urls: List[str],
         concurrent: int = 3,
         llm_config: Optional[Dict[str, Any]] = None,
+        llm_concurrent: int = 3,
     ) -> List[Dict[str, Any]]:
         """
         内部批量爬取方法 - 使用 arun_many 实现真正的异步并行
@@ -392,8 +488,9 @@ class Crawler:
 
         Args:
             urls: URL 列表
-            concurrent: 并发数
+            concurrent: 网页爬取并发数
             llm_config: LLM 配置字典（可选）
+            llm_concurrent: LLM 处理并发数
 
         Returns:
             爬取结果列表
@@ -426,24 +523,46 @@ class Crawler:
             }
             formatted_results.append(response)
 
-        # 第二阶段：如果有 LLM 配置，对成功的页面进行后处理
+        # 第二阶段：如果有 LLM 配置，对成功的页面进行并行后处理
         parsed_llm_config = _parse_llm_config(llm_config)
         if parsed_llm_config and parsed_llm_config.get("instruction"):
             instruction = parsed_llm_config["instruction"]
             schema = parsed_llm_config.get("schema")
 
-            for i, result in enumerate(formatted_results):
-                if result["success"]:
-                    llm_result = self._call_llm(result["markdown"], instruction, schema)
+            # 筛选出成功的结果
+            successful_results = [
+                (i, r) for i, r in enumerate(formatted_results) if r["success"]
+            ]
+
+            if successful_results:
+                # 使用并行批处理
+                llm_results = await self._call_llm_batch(
+                    [{"markdown": r["markdown"]} for _, r in successful_results],
+                    instruction,
+                    schema,
+                    max_concurrent=llm_concurrent,
+                )
+
+                # 将结果合并回原数组
+                for idx, (original_index, _) in enumerate(successful_results):
+                    llm_result = llm_results[idx]
                     if llm_result.get("success"):
                         if "summary" in llm_result:
-                            result["llm_summary"] = llm_result["summary"]
+                            formatted_results[original_index]["llm_summary"] = (
+                                llm_result["summary"]
+                            )
                         if "data" in llm_result:
-                            result["llm_data"] = llm_result["data"]
+                            formatted_results[original_index]["llm_data"] = llm_result[
+                                "data"
+                            ]
                         if "content" in llm_result:
-                            result["llm_content"] = llm_result["content"]
+                            formatted_results[original_index]["llm_content"] = (
+                                llm_result["content"]
+                            )
                     else:
-                        result["llm_error"] = llm_result.get("error", "Unknown error")
+                        formatted_results[original_index]["llm_error"] = llm_result.get(
+                            "error", "Unknown error"
+                        )
 
         return formatted_results
 
@@ -452,18 +571,25 @@ class Crawler:
         urls: List[str],
         concurrent: int = 3,
         llm_config: Optional[Dict[str, Any]] = None,
+        llm_concurrent: int = 3,
     ) -> List[Dict[str, Any]]:
         """
         批量爬取多个网页 (同步封装)
 
         Args:
             urls: URL 列表
-            concurrent: 并发数
+            concurrent: 网页爬取并发数
             llm_config: LLM 配置字典（可选）
+            llm_concurrent: LLM 处理并发数
 
         Returns:
             爬取结果列表
         """
         return _run_async(
-            self._crawl_batch(urls, concurrent=concurrent, llm_config=llm_config)
+            self._crawl_batch(
+                urls,
+                concurrent=concurrent,
+                llm_config=llm_config,
+                llm_concurrent=llm_concurrent,
+            )
         )

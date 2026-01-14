@@ -163,16 +163,16 @@ class TestCrawlerBatchLLMIntegration:
 
     @pytest.mark.asyncio
     async def test_crawl_batch_with_llm_config(self):
-        """测试带 LLM 配置的批量爬取 - 新设计：先爬取后处理"""
+        """测试带 LLM 配置的批量爬取 - 新设计：先爬取后处理，使用并行 LLM"""
         # Arrange
         crawler = Crawler()
         urls = ["https://example.com/page1", "https://example.com/page2"]
         llm_config = {"instruction": "提取标题"}
 
-        # Act - Mock _call_llm 来测试 LLM 后处理逻辑
-        with patch.object(crawler, "_call_llm") as mock_llm:
-            # 模拟 LLM 返回结构化数据
-            mock_llm.side_effect = [
+        # Act - Mock _call_llm_batch 来测试并行 LLM 后处理逻辑
+        with patch.object(crawler, "_call_llm_batch") as mock_llm_batch:
+            # 模拟并行 LLM 批处理返回结构化数据
+            mock_llm_batch.return_value = [
                 {"success": True, "data": {"title": "Page 1"}},
                 {"success": True, "data": {"title": "Page 2"}},
             ]
@@ -207,5 +207,9 @@ class TestCrawlerBatchLLMIntegration:
         assert results[0]["markdown"] == "# Page 1\n\nContent 1"  # 原始 Markdown
         assert results[0]["llm_data"]["title"] == "Page 1"  # LLM 处理结果
         assert results[1]["llm_data"]["title"] == "Page 2"
-        # 验证 _call_llm 被调用了两次（每个成功页面一次）
-        assert mock_llm.call_count == 2
+        # 验证 _call_llm_batch 被调用了一次（批量处理）
+        mock_llm_batch.assert_called_once()
+        # 验证传入的参数
+        call_args = mock_llm_batch.call_args
+        assert len(call_args[0][0]) == 2  # 传入 2 个项目
+        assert call_args[0][1] == "提取标题"  # instruction

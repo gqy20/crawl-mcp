@@ -1,6 +1,6 @@
 """Searcher 类单元测试"""
 
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, AsyncMock
 from crawl4ai_mcp.searcher import Searcher
 import tempfile
 
@@ -287,9 +287,9 @@ class TestSearcherImages:
 
     @patch("crawl4ai_mcp.searcher.DDGS")
     @patch("crawl4ai_mcp.searcher.requests.get")
-    @patch("crawl4ai_mcp.searcher.OpenAI")
+    @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
     def test_search_images_with_download_and_analyze(
-        self, mock_openai_class, mock_get, mock_ddgs_class
+        self, mock_async_openai_class, mock_get, mock_ddgs_class
     ):
         """测试搜索、下载并分析图片"""
         # Arrange - DDGS mock
@@ -315,9 +315,9 @@ class TestSearcherImages:
         mock_response.raise_for_status = MagicMock()
         mock_get.return_value = mock_response
 
-        # Mock OpenAI 客户端
-        mock_client = MagicMock()
-        mock_openai_class.return_value = mock_client
+        # Mock AsyncOpenAI 客户端
+        mock_client = AsyncMock()
+        mock_async_openai_class.return_value = mock_client
         mock_completion = MagicMock()
         mock_completion.choices = [
             MagicMock(message=MagicMock(content="这是一张测试图片"))
@@ -351,9 +351,9 @@ class TestSearcherImages:
             assert "analysis" in result["analysis_results"]["results"][0]
 
     @patch("crawl4ai_mcp.searcher.DDGS")
-    @patch("crawl4ai_mcp.searcher.OpenAI")
+    @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
     def test_search_images_analyze_without_download(
-        self, mock_openai_class, mock_ddgs_class
+        self, mock_async_openai_class, mock_ddgs_class
     ):
         """测试仅分析图片（不下载）- 使用 URL"""
         # Arrange
@@ -373,9 +373,9 @@ class TestSearcherImages:
             ]
         )
 
-        # Mock OpenAI 客户端
-        mock_client = MagicMock()
-        mock_openai_class.return_value = mock_client
+        # Mock AsyncOpenAI 客户端
+        mock_client = AsyncMock()
+        mock_async_openai_class.return_value = mock_client
         mock_completion = MagicMock()
         mock_completion.choices = [
             MagicMock(message=MagicMock(content="这是一张美丽的风景图片"))

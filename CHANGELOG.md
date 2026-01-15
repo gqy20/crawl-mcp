@@ -14,13 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM 并行处理，批量爬取时显著提升处理速度
 - 图片分析并发控制参数（`analyze_concurrent`）
 - CI workflow，每次提交自动运行测试和代码检查
+- CHANGELOG.md 维护版本变更记录
 
 ### Changed
 - 默认文本模型更新为 `glm-4.7`
 - 默认视觉模型更新为 `glm-4.6v`
+- 优化 publish.yml，从 CHANGELOG.md 读取 Release 内容
 
 ### Fixed
-- 修复搜索超时问题（升级到 ddgs>=9.0.0）
+- 修复并行测试的 mock 问题
 
 ### Refactor
 - 清理冗余代码和过时注释

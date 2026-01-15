@@ -132,15 +132,12 @@ jobs:
 
           # 从 CHANGELOG.md 提取对应版本的内容
           # 查找从 "## [VERSION]" 到下一个 "## [" 之间的内容
-          # 使用 sed 更可靠地提取
-          sed -n "/## \\[$VERSION\\]/,/## \\[/p" CHANGELOG.md | head -n -1 > release_body.md
+          # 使用 sed 提取，然后跳过第一行（标题）避免与 release name 重复
+          sed -n "/## \\[$VERSION\\]/,/## \\[/p" CHANGELOG.md | head -n -1 | tail -n +2 > release_body.md
 
           # 检查是否成功提取
           if [ ! -s release_body.md ]; then
-            echo "Warning: No changelog found for version $VERSION"
-            echo "## Release $VERSION" > release_body.md
-            echo "" >> release_body.md
-            echo "See [README.md](https://github.com/gqy20/crawl-mcp/blob/main/README.md) for usage." >> release_body.md
+            echo "See [README.md](https://github.com/gqy20/crawl-mcp/blob/main/README.md) for usage." > release_body.md
           fi
 
           # 添加安装说明

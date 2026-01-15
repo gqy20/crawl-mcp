@@ -5,5 +5,5 @@ from crawl4ai_mcp.fastmcp_server import mcp
 from crawl4ai_mcp.llm_config import LLMConfig, get_llm_config
 from crawl4ai_mcp.searcher import Searcher
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 __all__ = ["Crawler", "mcp", "LLMConfig", "get_llm_config", "Searcher"]

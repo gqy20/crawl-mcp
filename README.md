@@ -74,7 +74,8 @@ pip install crawl-mcp
       "env": {
         "OPENAI_API_KEY": "your-api-key",
         "OPENAI_BASE_URL": "https://api.openai.com/v1",
-        "LLM_MODEL": "gpt-4o-mini"
+        "LLM_MODEL": "glm-4.7",
+        "VISION_MODEL": "glm-4.6v"
       }
     }
   }

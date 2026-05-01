@@ -263,3 +263,109 @@ class TestExtractUrlMCPToolRegistered:
 
         tool_names = list(mcp._tool_manager._tools.keys())
         assert "extract_url" in tool_names
+
+
+# ============================================================
+# 4. search_books / search_videos — 新增搜索类型
+# ============================================================
+
+
+class TestSearchBooksExists:
+    """验证 search_books 方法存在且行为正确"""
+
+    def test_search_books_method_exists(self):
+        searcher = Searcher()
+        assert hasattr(searcher, "search_books")
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_books_returns_results(self, mock_ddgs_class):
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.books.return_value = iter(
+            [
+                {
+                    "title": "Clean Code",
+                    "author": "Robert C. Martin",
+                    "url": "https://example.com/clean-code",
+                }
+            ]
+        )
+
+        result = Searcher().search_books("clean code", max_results=5)
+
+        assert result["success"] is True
+        assert result["query"] == "clean code"
+        assert result["count"] == 1
+        assert result["results"][0]["title"] == "Clean Code"
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_books_delegates_to_wrapper(self, mock_ddgs_class):
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.books.return_value = iter([])
+
+        searcher = Searcher()
+        with patch.object(
+            searcher, "_search_wrapper", wraps=searcher._search_wrapper
+        ) as mock_wrapper:
+            searcher.search_books("python")
+
+            mock_wrapper.assert_called_once()
+
+
+class TestSearchVideosExists:
+    """验证 search_videos 方法存在且行为正确"""
+
+    def test_search_videos_method_exists(self):
+        searcher = Searcher()
+        assert hasattr(searcher, "search_videos")
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_videos_returns_results(self, mock_ddgs_class):
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.videos.return_value = iter(
+            [
+                {
+                    "title": "Python Tutorial",
+                    "url": "https://youtube.com/watch?v=abc",
+                    "duration": "10:30",
+                }
+            ]
+        )
+
+        result = Searcher().search_videos("python tutorial", max_results=5)
+
+        assert result["success"] is True
+        assert result["query"] == "python tutorial"
+        assert result["count"] == 1
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_videos_delegates_to_wrapper(self, mock_ddgs_class):
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.videos.return_value = iter([])
+
+        searcher = Searcher()
+        with patch.object(
+            searcher, "_search_wrapper", wraps=searcher._search_wrapper
+        ) as mock_wrapper:
+            searcher.search_videos("test")
+
+            mock_wrapper.assert_called_once()
+
+
+class TestSearchBooksVideosMCPRegistered:
+    """验证新搜索工具已注册为 MCP 工具"""
+
+    def test_search_books_tool_registered(self):
+        from crawl4ai_mcp.fastmcp_server import mcp
+
+        tool_names = list(mcp._tool_manager._tools.keys())
+        assert "search_books" in tool_names
+
+    def test_search_videos_tool_registered(self):
+        from crawl4ai_mcp.fastmcp_server import mcp
+
+        tool_names = list(mcp._tool_manager._tools.keys())
+        assert "search_videos" in tool_names

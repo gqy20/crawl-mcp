@@ -294,7 +294,7 @@ class TestAnalyzeImagesParallel:
 class TestSyncWrappers:
     """测试同步包装器"""
 
-    @patch("crawl4ai_mcp.crawler._run_async")
+    @patch("crawl4ai_mcp.crawler.run_async")
     def test_call_llm_batch_sync_wrapper(self, mock_run_async):
         """测试 _call_llm_batch 同步包装器"""
 
@@ -309,7 +309,7 @@ class TestSyncWrappers:
         mock_run_async.assert_called_once()
         assert result == [{"summary": "Test"}]
 
-    @patch("crawl4ai_mcp.searcher._run_async")
+    @patch("crawl4ai_mcp.searcher.run_async")
     def test_analyze_images_sync_wrapper(self, mock_run_async):
         """测试 _analyze_images 同步包装器"""
 

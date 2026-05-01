@@ -1,8 +1,24 @@
 """FastMCP 服务器单元测试"""
 
+import asyncio
 import pytest
 from unittest.mock import patch
 from crawl4ai_mcp.fastmcp_server import mcp
+
+
+def _get_tool(name: str):
+    """辅助函数：通过名称获取已注册的工具（兼容 fastmcp 3.x）"""
+    tools = asyncio.run(mcp.list_tools())
+    for t in tools:
+        if t.name == name:
+            return t
+    raise AssertionError(f"Tool '{name}' not found")
+
+
+def _get_tool_names() -> list[str]:
+    """获取所有已注册工具名称"""
+    tools = asyncio.run(mcp.list_tools())
+    return [t.name for t in tools]
 
 
 class TestFastMCPTools:
@@ -10,23 +26,17 @@ class TestFastMCPTools:
 
     def test_mcp_server_has_tools(self):
         """测试 MCP 服务器注册了工具"""
-        # Act
-        tools = mcp._tool_manager._tools
+        tool_names = _get_tool_names()
 
-        # Assert
-        tool_names = list(tools.keys())
         assert "crawl_single" in tool_names
         assert "crawl_site" in tool_names
         assert "crawl_batch" in tool_names
 
     def test_crawl_single_tool_exists(self):
         """测试 crawl_single 工具存在且有正确的 schema"""
-        # Act
-        tool = mcp._tool_manager._tools.get("crawl_single")
+        tool = _get_tool("crawl_single")
 
-        # Assert
         assert tool is not None
-        # 验证函数签名
         import inspect
 
         sig = inspect.signature(tool.fn)
@@ -36,10 +46,8 @@ class TestFastMCPTools:
 
     def test_crawl_site_tool_exists(self):
         """测试 crawl_site 工具存在且有正确的 schema"""
-        # Act
-        tool = mcp._tool_manager._tools.get("crawl_site")
+        tool = _get_tool("crawl_site")
 
-        # Assert
         assert tool is not None
         import inspect
 
@@ -52,10 +60,8 @@ class TestFastMCPTools:
 
     def test_crawl_batch_tool_exists(self):
         """测试 crawl_batch 工具存在且有正确的 schema"""
-        # Act
-        tool = mcp._tool_manager._tools.get("crawl_batch")
+        tool = _get_tool("crawl_batch")
 
-        # Assert
         assert tool is not None
         import inspect
 
@@ -71,7 +77,6 @@ class TestFastMCPToolFunctions:
     @pytest.mark.asyncio
     async def test_crawl_single_function_works(self):
         """测试 crawl_single 函数能正确执行"""
-        # Arrange
         from crawl4ai_mcp.fastmcp_server import _crawler
 
         url = "https://example.com"
@@ -84,19 +89,16 @@ class TestFastMCPToolFunctions:
                 "error": None,
             }
 
-        # Act
         with patch.object(_crawler, "crawl_single", side_effect=mock_crawl):
-            tool = mcp._tool_manager._tools.get("crawl_single")
+            tool = _get_tool("crawl_single")
             result = await tool.fn(url)
 
-        # Assert
         assert result["success"] is True
         assert result["markdown"] == "# Test"
 
     @pytest.mark.asyncio
     async def test_crawl_site_function_works(self):
         """测试 crawl_site 函数能正确执行"""
-        # Arrange
         from crawl4ai_mcp.fastmcp_server import _crawler
 
         url = "https://example.com"
@@ -109,18 +111,15 @@ class TestFastMCPToolFunctions:
                 "results": [],
             }
 
-        # Act
         with patch.object(_crawler, "crawl_site", side_effect=mock_crawl_site):
-            tool = mcp._tool_manager._tools.get("crawl_site")
+            tool = _get_tool("crawl_site")
             result = await tool.fn(url)
 
-        # Assert
         assert result["successful_pages"] == 1
 
     @pytest.mark.asyncio
     async def test_crawl_batch_function_works(self):
         """测试 crawl_batch 函数能正确执行"""
-        # Arrange
         from crawl4ai_mcp.fastmcp_server import _crawler
 
         urls = ["https://example.com"]
@@ -128,11 +127,9 @@ class TestFastMCPToolFunctions:
         async def mock_crawl_batch(urls, concurrent, llm_config=None, llm_concurrent=3):
             return [{"success": True, "markdown": "# Test", "title": "Test"}]
 
-        # Act
         with patch.object(_crawler, "crawl_batch", side_effect=mock_crawl_batch):
-            tool = mcp._tool_manager._tools.get("crawl_batch")
+            tool = _get_tool("crawl_batch")
             result = await tool.fn(urls)
 
-        # Assert
         assert len(result) == 1
         assert result[0]["success"] is True

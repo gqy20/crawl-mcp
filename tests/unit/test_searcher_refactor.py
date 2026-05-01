@@ -259,9 +259,11 @@ class TestExtractUrlMCPToolRegistered:
 
     def test_extract_url_tool_registered(self):
         """fastmcp_server 应注册 extract_url 工具"""
+        import asyncio
         from crawl4ai_mcp.fastmcp_server import mcp
 
-        tool_names = list(mcp._tool_manager._tools.keys())
+        tools = asyncio.run(mcp.list_tools())
+        tool_names = [t.name for t in tools]
         assert "extract_url" in tool_names
 
 
@@ -359,13 +361,17 @@ class TestSearchBooksVideosMCPRegistered:
     """验证新搜索工具已注册为 MCP 工具"""
 
     def test_search_books_tool_registered(self):
+        import asyncio
         from crawl4ai_mcp.fastmcp_server import mcp
 
-        tool_names = list(mcp._tool_manager._tools.keys())
+        tools = asyncio.run(mcp.list_tools())
+        tool_names = [t.name for t in tools]
         assert "search_books" in tool_names
 
     def test_search_videos_tool_registered(self):
+        import asyncio
         from crawl4ai_mcp.fastmcp_server import mcp
 
-        tool_names = list(mcp._tool_manager._tools.keys())
+        tools = asyncio.run(mcp.list_tools())
+        tool_names = [t.name for t in tools]
         assert "search_videos" in tool_names

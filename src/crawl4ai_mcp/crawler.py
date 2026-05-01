@@ -16,7 +16,8 @@ from crawl4ai import (
     BFSDeepCrawlStrategy,
     SemaphoreDispatcher,
 )
-from openai import AsyncOpenAI
+from crawl4ai.extraction_strategy import LLMExtractionStrategy
+from crawl4ai.types import create_llm_config
 
 from .llm_config import get_default_llm_config
 from .utils import run_async
@@ -44,6 +45,17 @@ def _parse_llm_config(llm_config: Optional[Dict[str, Any]]) -> Optional[Dict[str
     return {"instruction": str(llm_config)}
 
 
+def _build_llm_config():
+    """创建 crawl4ai LLMConfig（从环境变量读取）"""
+
+    cfg = get_default_llm_config()
+    return create_llm_config(
+        provider=f"openai/{cfg.model}",
+        api_token=cfg.api_key,
+        base_url=cfg.base_url,
+    )
+
+
 class Crawler:
     """统一的爬虫类，整合单页、整站、批量爬取功能"""
 
@@ -68,21 +80,15 @@ class Crawler:
         enhanced: bool = False,
         llm_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """内部异步爬取方法（浏览器实例复用版）
-
-        关键优化：AsyncWebCrawler 在重试循环外部创建，
-        网络错误时复用同一浏览器实例，避免每次重试都启动/关闭浏览器。
-        """
+        """内部异步爬取方法（浏览器实例复用版）"""
         config = self._create_config(enhanced)
-
         max_retries = 3
 
         async with AsyncWebCrawler(verbose=False) as crawler:
             for attempt in range(max_retries + 1):
                 try:
                     result = await crawler.arun(url=url, config=config)
-
-                    response = {
+                    return {
                         "success": result.success,
                         "markdown": result.markdown.raw_markdown
                         if result.success
@@ -92,11 +98,8 @@ class Crawler:
                         else "",
                         "error": result.error_message if not result.success else None,
                     }
-                    return response
-
                 except Exception as e:
                     error_msg = str(e)
-
                     is_network_error = any(
                         err in error_msg
                         for err in [
@@ -106,135 +109,98 @@ class Crawler:
                             "ERR_TIMED_OUT",
                         ]
                     )
-
                     if is_network_error and attempt < max_retries:
                         await asyncio.sleep(2**attempt)
                         continue
-
                     raise
 
-    def _call_llm(
-        self, content: str, instruction: str, schema: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """调用 LLM 处理文本内容（同步）"""
-        from openai import OpenAI
-
-        llm_cfg = get_default_llm_config()
-        client = OpenAI(api_key=llm_cfg.api_key, base_url=llm_cfg.base_url)
-
-        messages = [
-            {"role": "system", "content": "你是一个专业的文本处理助手。"},
-            {"role": "user", "content": f"指令：{instruction}\n\n内容：\n{content}"},
-        ]
-
-        if schema:
-            messages[0]["content"] += f"\n\n请按照以下 JSON Schema 返回结果：{schema}"
-
-        try:
-            response = client.chat.completions.create(
-                model=llm_cfg.model,
-                messages=messages,
-                temperature=0.3,
-            )
-            result_text = response.choices[0].message.content
-
-            if schema:
-                try:
-                    cleaned = result_text.strip()
-                    if cleaned.startswith("```"):
-                        lines = cleaned.split("\n")
-                        cleaned = "\n".join(
-                            line
-                            for line in lines[1:]
-                            if not line.strip().startswith("```")
-                        )
-                    return {"success": True, "data": json.loads(cleaned)}
-                except json.JSONDecodeError:
-                    return {"success": True, "content": result_text}
-            return {"success": True, "summary": result_text}
-
-        except Exception as e:
-            return {"success": False, "error": str(e), "content": content}
-
-    async def _call_llm_batch(
-        self,
-        items: List[Dict[str, Any]],
-        instruction: str,
-        schema: Optional[Dict[str, Any]] = None,
-        max_concurrent: int = 3,
-    ) -> List[Dict[str, Any]]:
-        """并行调用 LLM 处理多个文本内容"""
-        llm_cfg = get_default_llm_config()
-        client = AsyncOpenAI(api_key=llm_cfg.api_key, base_url=llm_cfg.base_url)
-
-        semaphore = asyncio.Semaphore(max_concurrent)
-
-        async def process_item(item: Dict[str, Any]) -> Dict[str, Any]:
-            async with semaphore:
-                content = item.get("markdown", "")
-                messages = [
-                    {"role": "system", "content": "你是一个专业的文本处理助手。"},
-                    {
-                        "role": "user",
-                        "content": f"指令：{instruction}\n\n内容：\n{content}",
-                    },
-                ]
-                if schema:
-                    messages[0]["content"] += (
-                        f"\n\n请按照以下 JSON Schema 返回结果：{schema}"
-                    )
-
-                try:
-                    response = await client.chat.completions.create(
-                        model=llm_cfg.model, messages=messages, temperature=0.3
-                    )
-                    result_text = response.choices[0].message.content
-
-                    if schema:
-                        try:
-                            cleaned = result_text.strip()
-                            if cleaned.startswith("```"):
-                                lines = cleaned.split("\n")
-                                cleaned = "\n".join(
-                                    line
-                                    for line in lines[1:]
-                                    if not line.strip().startswith("```")
-                                )
-                            return {"success": True, "data": json.loads(cleaned)}
-                        except json.JSONDecodeError:
-                            return {"success": True, "content": result_text}
-                    return {"success": True, "summary": result_text}
-
-                except Exception as e:
-                    return {"success": False, "error": str(e)}
-
-        tasks = [process_item(item) for item in items]
-        results = await asyncio.gather(*tasks)
-        return list(results)
-
-    def _call_llm_batch_sync(
-        self,
-        items: List[Dict[str, Any]],
-        instruction: str,
-        schema: Optional[Dict[str, Any]] = None,
-        max_concurrent: int = 3,
-    ) -> List[Dict[str, Any]]:
-        """并行调用 LLM 处理多个文本内容（同步封装）"""
-        return run_async(
-            self._call_llm_batch(items, instruction, schema, max_concurrent)
-        )
-
-    def postprocess_markdown(
-        self, markdown: str, instruction: str, schema: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """对 Markdown 内容进行 LLM 后处理"""
+    def _postprocess_with_llm(
+        self, markdown: str, instruction: str, schema=None
+    ) -> Dict:
+        """使用原生 LLMExtractionStrategy 做后处理"""
         if not instruction or not instruction.strip():
+            return {"success": True, "original_markdown": markdown, "skipped": True}
+
+        kw = dict(
+            llm_config=_build_llm_config(),
+            instruction=instruction,
+            extraction_type="schema" if schema else "block",
+        )
+        if schema:
+            kw["schema"] = schema
+
+        strategy = LLMExtractionStrategy(**kw)
+        blocks = strategy.extract(url="", ix=0, html=markdown)
+
+        if not blocks:
             return {
-                "success": True,
-                "original_markdown": markdown,
-                "skipped": "No instruction provided",
+                "success": False,
+                "error": "LLM returned empty results",
+                "content": markdown,
             }
-        return self._call_llm(markdown, instruction, schema)
+
+        if blocks[0].get("error"):
+            return {"success": False, "error": "Extraction error", "content": markdown}
+
+        # schema 模式：返回结构化数据
+        if schema:
+            item = {k: v for k, v in blocks[0].items() if k != "error"}
+            return {"success": True, "data": item}
+
+        # block 模式：合并所有 block 的 content 作为摘要
+        parts = []
+        for b in blocks:
+            if b.get("content"):
+                parts.extend(
+                    b["content"] if isinstance(b["content"], list) else [b["content"]]
+                )
+        summary = "\n\n".join(parts)
+        return {"success": True, "summary": summary}
+
+    async def _postprocess_batch_with_llm(
+        self, items: List[Dict], instruction: str, schema=None, max_concurrent=3
+    ) -> List[Dict]:
+        """使用原生 LLMExtractionStrategy 并行做批量后处理"""
+        import concurrent.futures
+
+        llm_cfg = _build_llm_config()
+        extraction_type = "schema" if schema else "block"
+        kw = dict(
+            llm_config=llm_cfg, instruction=instruction, extraction_type=extraction_type
+        )
+        if schema:
+            kw["schema"] = schema
+
+        def process_one(item):
+            strategy = LLMExtractionStrategy(**kw)
+            blocks = strategy.extract(url="", ix=0, html=item.get("markdown", ""))
+            if not blocks or blocks[0].get("error"):
+                return {"__index__": items.index(item), "__error__": True}
+            b = blocks[0]
+            if schema:
+                return {
+                    **{k: v for k, v in b.items() if k != "error"},
+                    "__index__": items.index(item),
+                }
+            content_parts = (
+                b.get("content", [])
+                if isinstance(b.get("content"), list)
+                else [b.get("content", "")]
+            )
+            return {
+                "summary": "\n\n".join(str(p) for p in content_parts),
+                "__index__": items.index(item),
+            }
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_concurrent
+        ) as executor:
+            futures = [executor.submit(process_one, item) for item in items]
+            results = [f.result() for f in futures]
+
+        # 按 __index__ 排序回原顺序
+        results.sort(key=lambda x: x.pop("__index__"))
+        return results
 
     # ================================================================
     # 公开 API — 单页爬取
@@ -246,36 +212,27 @@ class Crawler:
         enhanced: bool = False,
         llm_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """爬取单个网页（两阶段架构）
-
-        阶段 1：快速爬取 Markdown
-        阶段 2：如有 llm_config，对 Markdown 做 LLM 后处理
-        """
-        parsed_llm_config = _parse_llm_config(llm_config)
+        """爬取单个网页（两阶段架构）"""
+        parsed = _parse_llm_config(llm_config)
 
         # 第一阶段：快速爬取
-        crawl_result = run_async(self._crawl(url, enhanced, llm_config=None))
+        result = run_async(self._crawl(url, enhanced))
 
         # 第二阶段：LLM 后处理
-        if parsed_llm_config and crawl_result["success"]:
-            instruction = parsed_llm_config.get("instruction", "")
-            schema = parsed_llm_config.get("schema")
+        if parsed and result["success"]:
+            llm_result = self._postprocess_with_llm(
+                result["markdown"],
+                parsed.get("instruction", ""),
+                parsed.get("schema"),
+            )
+            if llm_result.get("success"):
+                for key in ("summary", "data", "content"):
+                    if key in llm_result:
+                        result[f"llm_{key}"] = llm_result[key]
+            else:
+                result["llm_error"] = llm_result.get("error", "Unknown error")
 
-            if instruction:
-                llm_result = self.postprocess_markdown(
-                    crawl_result["markdown"], instruction, schema
-                )
-                if llm_result.get("success"):
-                    if "summary" in llm_result:
-                        crawl_result["llm_summary"] = llm_result["summary"]
-                    if "data" in llm_result:
-                        crawl_result["llm_data"] = llm_result["data"]
-                    if "content" in llm_result:
-                        crawl_result["llm_content"] = llm_result["content"]
-                else:
-                    crawl_result["llm_error"] = llm_result.get("error", "Unknown error")
-
-        return crawl_result
+        return result
 
     # ================================================================
     # 公开 API — 整站深度爬取
@@ -344,54 +301,38 @@ class Crawler:
                 urls=urls, config=config, dispatcher=dispatcher
             )
 
-        formatted_results = []
-        for r in raw_results:
-            formatted_results.append(
-                {
-                    "success": r.success,
-                    "markdown": r.markdown.raw_markdown if r.success else "",
-                    "title": r.metadata.get("title", "") if r.success else "",
-                    "error": r.error_message if not r.success else None,
-                }
-            )
+        formatted_results = [
+            {
+                "success": r.success,
+                "markdown": r.markdown.raw_markdown if r.success else "",
+                "title": r.metadata.get("title", "") if r.success else "",
+                "error": r.error_message if not r.success else None,
+            }
+            for r in raw_results
+        ]
 
         # 第二阶段：LLM 后处理
-        parsed_llm_config = _parse_llm_config(llm_config)
-        if parsed_llm_config and parsed_llm_config.get("instruction"):
-            instruction = parsed_llm_config["instruction"]
-            schema = parsed_llm_config.get("schema")
-
+        parsed = _parse_llm_config(llm_config)
+        if parsed and parsed.get("instruction"):
             successful = [
                 (i, r) for i, r in enumerate(formatted_results) if r["success"]
             ]
-
             if successful:
-                llm_results = await self._call_llm_batch(
-                    [{"markdown": r["markdown"]} for _, r in successful],
-                    instruction,
-                    schema,
+                llm_results = await self._postprocess_batch_with_llm(
+                    [r for _, r in successful],
+                    parsed["instruction"],
+                    parsed.get("schema"),
                     max_concurrent=llm_concurrent,
                 )
-
                 for idx, (original_index, _) in enumerate(successful):
-                    llm_result = llm_results[idx]
-                    if llm_result.get("success"):
-                        if "summary" in llm_result:
-                            formatted_results[original_index]["llm_summary"] = (
-                                llm_result["summary"]
-                            )
-                        if "data" in llm_result:
-                            formatted_results[original_index]["llm_data"] = llm_result[
-                                "data"
-                            ]
-                        if "content" in llm_result:
-                            formatted_results[original_index]["llm_content"] = (
-                                llm_result["content"]
-                            )
-                    else:
-                        formatted_results[original_index]["llm_error"] = llm_result.get(
-                            "error", "Unknown error"
+                    lr = llm_results[idx]
+                    if lr.pop("__error__", None):
+                        formatted_results[original_index]["llm_error"] = lr.get(
+                            "error", "Unknown"
                         )
+                    for key in ("summary", "data"):
+                        if key in lr:
+                            formatted_results[original_index][f"llm_{key}"] = lr[key]
 
         return formatted_results
 

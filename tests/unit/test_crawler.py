@@ -169,12 +169,12 @@ class TestCrawlerBatchLLMIntegration:
         urls = ["https://example.com/page1", "https://example.com/page2"]
         llm_config = {"instruction": "提取标题"}
 
-        # Act - Mock _call_llm_batch 来测试并行 LLM 后处理逻辑
-        with patch.object(crawler, "_call_llm_batch") as mock_llm_batch:
+        # Act - Mock _postprocess_batch_with_llm 来测试并行 LLM 后处理逻辑
+        with patch.object(crawler, "_postprocess_batch_with_llm") as mock_llm_batch:
             # 模拟并行 LLM 批处理返回结构化数据
             mock_llm_batch.return_value = [
-                {"success": True, "data": {"title": "Page 1"}},
-                {"success": True, "data": {"title": "Page 2"}},
+                {"summary": "Page 1", "__index__": 0},
+                {"summary": "Page 2", "__index__": 1},
             ]
 
             # 同时需要 mock 底层爬取，避免实际网络请求
@@ -204,10 +204,10 @@ class TestCrawlerBatchLLMIntegration:
         # Assert
         assert len(results) == 2
         assert results[0]["success"] is True
-        assert results[0]["markdown"] == "# Page 1\n\nContent 1"  # 原始 Markdown
-        assert results[0]["llm_data"]["title"] == "Page 1"  # LLM 处理结果
-        assert results[1]["llm_data"]["title"] == "Page 2"
-        # 验证 _call_llm_batch 被调用了一次（批量处理）
+        assert results[0]["markdown"] == "# Page 1\n\nContent 1"
+        assert results[0]["llm_summary"] == "Page 1"
+        assert results[1]["llm_summary"] == "Page 2"
+        mock_llm_batch.assert_called_once()
         mock_llm_batch.assert_called_once()
         # 验证传入的参数
         call_args = mock_llm_batch.call_args

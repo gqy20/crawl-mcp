@@ -101,7 +101,7 @@ class TestCrawlSingleTwoPhase:
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
             patch.object(
                 crawler,
-                "postprocess_markdown",
+                "_postprocess_with_llm",
                 return_value={"success": True, "summary": "Summary text"},
             ) as mock_llm,
         ):
@@ -137,7 +137,7 @@ class TestCrawlSingleTwoPhase:
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
             patch.object(
                 crawler,
-                "postprocess_markdown",
+                "_postprocess_with_llm",
                 return_value={"success": False, "error": "LLM failed"},
             ),
         ):
@@ -161,7 +161,7 @@ class TestCrawlSingleTwoPhase:
 
         with (
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
-            patch.object(crawler, "postprocess_markdown") as mock_llm,
+            patch.object(crawler, "_postprocess_with_llm") as mock_llm,
         ):
             mock_crawler_instance = AsyncMock()
             mock_crawler_instance.arun.return_value = MagicMock(
@@ -313,10 +313,10 @@ class TestCrawlBatchV2:
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
             patch.object(
                 crawler,
-                "_call_llm_batch",
+                "_postprocess_batch_with_llm",
                 return_value=[
-                    {"success": True, "summary": "S0"},
-                    {"success": True, "summary": "S1"},
+                    {"summary": "S0", "__index__": 0},
+                    {"summary": "S1", "__index__": 1},
                 ],
             ) as mock_llm,
         ):
@@ -467,14 +467,14 @@ class TestNoDeadCode:
         assert not hasattr(crawler, "_add_llm_strategy")
 
     def test_no_direct_llm_extraction_imports(self):
-        """crawler.py 不应直接导入 LLMExtractionStrategy 或 Crawl4AILLMConfig"""
+        """crawler.py 不应使用旧的 Crawl4AILLMConfig 别名"""
         import crawl4ai_mcp.crawler as crawler_module
 
         source = getattr(crawler_module, "__file__")
         if source:
             with open(source) as f:
                 code = f.read()
-            assert "LLMExtractionStrategy" not in code
+            # 允许使用原生 LLMExtractionStrategy（复用设计）
             assert "from crawl4ai import LLMConfig as Crawl4AILLMConfig" not in code
 
 

@@ -7,12 +7,20 @@
 
 ## 功能
 
-- **crawl_single** - 爬取单个网页，返回 Markdown 格式
+### 爬取工具
+- **crawl_single** - 爬取单个网页，返回 Markdown 格式（浏览器渲染，适合 SPA）
+- **extract_url** - 轻量级 URL 提取（无需浏览器，速度快 5-10 倍）
 - **crawl_site** - 递归爬取整个网站
 - **crawl_batch** - 批量爬取多个网页（异步并行）
-- **search_text** - 搜索网页内容（通用搜索）
-- **search_news** - 搜索新闻内容
-- **search_images** - 搜索图片（支持下载和分析）
+
+### 搜索工具
+- **search_text** - 通用网页搜索
+- **search_news** - 新闻内容搜索
+- **search_images** - 图片搜索（支持下载和 AI 分析）
+- **search_books** - 图书/电子书搜索
+- **search_videos** - 视频搜索（含时长、播放量等）
+
+### AI 能力
 - **LLM 集成** - AI 驱动的内容提取和摘要（先快速爬取，后可选处理）
 - **自动重试** - 网络错误自动重试（指数退避）
 
@@ -25,17 +33,18 @@
 
 ### 性能对比
 
-| 场景 | 爬取阶段 | 总耗时 |
-|------|---------|--------|
-| crawl_single（无 LLM） | ~7s | **11s** |
-| crawl_single（有 LLM） | ~6s | **40s** |
-| crawl_batch 2 页（无 LLM） | ~15s | **15s** |
-| crawl_batch（有 LLM） | ~6s/页 | **~20s/页** |
+| 场景 | 耗时 | 说明 |
+|------|------|------|
+| extract_url（静态页面） | **~1.5s** | ddgs extract，无需浏览器 |
+| crawl_single（无 LLM） | ~7s | 浏览器渲染 |
+| crawl_single（有 LLM） | ~40s | 爬取 + AI 处理 |
+| crawl_batch 2 页（无 LLM） | ~15s | 并行爬取 |
+| search_text / news / books / videos | **~1.5-2s** | ddgs 搜索 |
 
 **关键优势**：
-- 不使用 LLM 时 11 秒即可获取结果
-- 使用 LLM 时爬取阶段仍然快速，用户可以先看到原始内容
-- 相比旧设计（LLMExtractionStrategy 需要 123 秒），速度提升 3-10 倍
+- 静态页面用 `extract_url`，1.5 秒出结果
+- SPA/JS 重度页面用 `crawl_single`，浏览器渲染保证完整
+- 搜索类工具全部基于 ddgs，秒级响应
 
 ## 安装
 
@@ -114,6 +123,29 @@ pip install crawl-mcp
 **注意**: `api_key`、`base_url`、`model` 从环境变量读取。
 
 ## 搜索功能
+
+### extract_url - 轻量级 URL 提取
+
+适用于静态页面、文章、博客等不需要 JS 渲染的场景。
+
+```json
+{
+  "name": "extract_url",
+  "arguments": {
+    "url": "https://example.com/article",
+    "fmt": "text_markdown"
+  }
+}
+```
+
+**参数说明**：
+- `url`: 要提取的网页 URL
+- `fmt`: 输出格式（可选）
+  - `text_markdown`: Markdown 格式（默认）
+  - `text_plain`: 纯文本
+  - `text_rich`: 富文本
+  - `text`: 原始 HTML
+  - `content`: 原始字节
 
 ### search_text - 通用网页搜索
 
@@ -276,6 +308,38 @@ pip install crawl-mcp
   }
 }
 ```
+
+### search_books - 图书搜索
+
+适用于学术研究、技术书籍整理、文献检索。
+
+```json
+{
+  "name": "search_books",
+  "arguments": {
+    "query": "clean code software engineering",
+    "max_results": 5
+  }
+}
+```
+
+**返回字段**：title, author, publisher, url, thumbnail, info
+
+### search_videos - 视频搜索
+
+适用于教程搜集、视频素材整理、内容分析。
+
+```json
+{
+  "name": "search_videos",
+  "arguments": {
+    "query": "python tutorial beginner",
+    "max_results": 5
+  }
+}
+```
+
+**返回字段**：title, duration, embed_url, thumbnail, statistics (viewCount), publisher, uploader
 
 ## 开发
 

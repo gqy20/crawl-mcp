@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-05-01
+
+### Added
+- `extract_url` 工具：基于 ddgs.extract() 的轻量级 URL 内容提取（无需浏览器，速度提升 5-10 倍）
+  - 支持 5 种输出格式：text_markdown / text_plain / text_rich / text / content
+- `search_books` 工具：图书/电子书搜索（复用 ddgs.books）
+- `search_videos` 工具：视频搜索（含时长、播放量、embed 等丰富字段）
+
+### Changed
+- **依赖全面升级**：
+  - crawl4ai: 0.8.5 → 0.8.6
+  - ddgs: 9.10.0 → 9.14.1（BingImages 后端、DHT P2P 缓存 beta、primp HTTP 客户端升级）
+  - fastmcp: 2.14.1 → 3.2.4（Provider/Transform 架构、Code Mode、Apps UI）
+  - primp: 0.15.0 → 1.2.3
+- Crawler 重构：用原生 `LLMExtractionStrategy` 替换自实现的 LLM 方法
+  - 删除 `_call_llm`、`_call_llm_batch`、`_call_llm_batch_sync`、`postprocess_markdown`
+  - 新增 `_postprocess_with_llm`：委托给原生策略，支持 block 和 schema 两种模式
+  - 新增 `_postprocess_batch_with_llm`：ThreadPoolExecutor 并行处理
+- Searcher 重构：
+  - 提取 `_search_wrapper` 通用方法，消除 search_text/search_news 重复代码
+  - `_download_images` 改为 ThreadPoolExecutor 并行下载（默认 3 并发，结果保序）
+- `__init__.py` 版本号改为 `importlib.metadata` 动态读取，消除硬编码
+
+### Fixed
+- BFSDeepCrawlStrategy 返回 list 的兼容问题（arun 返回列表而非单个结果）
+- LLM schema 提取时 JSON 被 Markdown 围栏包裹的解析问题
+- fastmcp 3.x API 适配：`_tool_manager._tools` → `mcp.list_tools()`（异步）
+
 ## [0.1.3] - 2025-01-15
 
 ### Added

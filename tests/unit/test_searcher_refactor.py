@@ -189,3 +189,77 @@ class TestDownloadImagesParallel:
             "https://b.com/2.jpg",
             "https://c.com/3.jpg",
         ]
+
+
+# ============================================================
+# 3. extract_url — 基于 ddgs.extract() 的轻量 URL 提取
+# ============================================================
+
+
+class TestExtractUrlExists:
+    """验证 extract_url 方法存在且行为正确"""
+
+    def test_extract_url_method_exists(self):
+        """extract_url 应该作为公共方法存在"""
+        searcher = Searcher()
+        assert hasattr(searcher, "extract_url")
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_extract_url_returns_markdown(self, mock_ddgs_class):
+        """extract_url 默认应返回 Markdown 格式内容"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.extract.return_value = {
+            "url": "https://example.com",
+            "content": "# Hello\n\nWorld content",
+        }
+
+        searcher = Searcher()
+        result = searcher.extract_url("https://example.com")
+
+        assert result["success"] is True
+        assert result["url"] == "https://example.com"
+        assert result["content"] == "# Hello\n\nWorld content"
+        assert "markdown" in result or "content" in result
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_extract_url_handles_error(self, mock_ddgs_class):
+        """extract_url 异常时应返回错误格式"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.extract.side_effect = Exception("Connection timeout")
+
+        searcher = Searcher()
+        result = searcher.extract_url("https://timeout.example.com")
+
+        assert result["success"] is False
+        assert "error" in result
+        assert result["url"] == "https://timeout.example.com"
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_extract_url_passes_fmt_param(self, mock_ddgs_class):
+        """extract_url 应支持 fmt 参数传递"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.extract.return_value = {
+            "url": "https://example.com",
+            "content": "plain text",
+        }
+
+        searcher = Searcher()
+        searcher.extract_url("https://example.com", fmt="text_plain")
+
+        mock_ddgs.extract.assert_called_once_with(
+            "https://example.com", fmt="text_plain"
+        )
+
+
+class TestExtractUrlMCPToolRegistered:
+    """验证 extract_url 已注册为 MCP 工具"""
+
+    def test_extract_url_tool_registered(self):
+        """fastmcp_server 应注册 extract_url 工具"""
+        from crawl4ai_mcp.fastmcp_server import mcp
+
+        tool_names = list(mcp._tool_manager._tools.keys())
+        assert "extract_url" in tool_names

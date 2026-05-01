@@ -65,6 +65,31 @@ class Searcher:
             lambda ddgs, **kw: ddgs.news(**kw), query, max_results=max_results
         )
 
+    def extract_url(self, url: str, fmt: str = "text_markdown") -> Dict[str, Any]:
+        """轻量级 URL 内容提取（基于 ddgs.extract，无需浏览器）
+
+        适用于静态页面、文章、博客等不需要 JS 渲染的场景。
+        速度比 crawl_single 快 5-10 倍（~1s vs ~8s）。
+
+        Args:
+            url: 要提取的网页 URL
+            fmt: 输出格式 (text_markdown / text_plain / text_rich / text / content)
+        """
+        try:
+            result = DDGS().extract(url, fmt=fmt)
+            return {
+                "success": True,
+                "url": result.get("url", url),
+                "content": result.get("content", ""),
+                "fmt": fmt,
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "url": url,
+                "error": str(e),
+            }
+
     def search_images(
         self,
         query: str,

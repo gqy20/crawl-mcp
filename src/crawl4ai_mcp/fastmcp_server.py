@@ -24,6 +24,32 @@ _searcher = Searcher()
 
 
 @mcp.tool
+def extract_url(
+    url: str,
+    fmt: str = "text_markdown",
+) -> Dict[str, Any]:
+    """
+    轻量级提取网页内容（无需浏览器，速度快 5-10 倍）
+
+    基于 ddgs.extract() 实现，适用于静态页面、文章、博客等不需要 JS 渲染的场景。
+    如需爬取 SPA 或 JS 重度渲染的页面，请使用 crawl_single。
+
+    Args:
+        url: 要提取的网页 URL
+        fmt: 输出格式:
+            - text_markdown: Markdown 格式（默认）
+            - text_plain: 纯文本
+            - text_rich: 富文本
+            - text: 原始 HTML
+            - content: 原始字节
+
+    Returns:
+        包含 success, url, content, fmt, (可选) error 的字典
+    """
+    return _searcher.extract_url(url, fmt)
+
+
+@mcp.tool
 def crawl_single(
     url: str,
     enhanced: bool = False,

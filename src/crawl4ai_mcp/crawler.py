@@ -270,24 +270,25 @@ class Crawler:
     ) -> Dict[str, Any]:
         """整站深度爬取（使用 BFSDeepCrawlStrategy）"""
         config = self._create_config()
-        strategy = BFSDeepCrawlStrategy(max_depth=depth, url=url)
-        dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
+        config.deep_crawl_strategy = BFSDeepCrawlStrategy(
+            max_depth=depth, max_pages=pages
+        )
 
         async with AsyncWebCrawler(verbose=False) as crawler:
-            results = await crawler.arun_many(
-                urls=[url], config=config, dispatcher=dispatcher, strategy=strategy
-            )
+            raw_result = await crawler.arun(url=url, config=config)
 
-        formatted = []
-        for r in results:
-            formatted.append(
-                {
-                    "success": r.success,
-                    "markdown": r.markdown.raw_markdown if r.success else "",
-                    "title": r.metadata.get("title", "") if r.success else "",
-                    "error": r.error_message if not r.success else None,
-                }
-            )
+        # BFSDeepCrawlStrategy 返回列表，普通爬取返回单个结果
+        results_list = raw_result if isinstance(raw_result, list) else [raw_result]
+
+        formatted = [
+            {
+                "success": r.success,
+                "markdown": r.markdown.raw_markdown if r.success else "",
+                "title": r.metadata.get("title", "") if r.success else "",
+                "error": r.error_message if not r.success else None,
+            }
+            for r in results_list
+        ]
 
         return {
             "successful_pages": sum(1 for r in formatted if r["success"]),

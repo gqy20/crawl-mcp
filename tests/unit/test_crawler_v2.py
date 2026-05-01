@@ -5,8 +5,9 @@
 - Crawler 核心爬取（两阶段架构）
 - 浏览器实例复用（重试时复用）
 - 批量爬取 + LLM 后处理
-- 整站深度爬取（BFSDeepCrawlStrategy）
-- MemoryAdaptiveDispatcher 支持
+- 整站深度爬取（BFSDeepCrawlStrategy + arun）
+- 无死代码验证
+- Searcher 使用公共 utils
 """
 
 import asyncio
@@ -44,7 +45,6 @@ class TestRunAsyncUtility:
             async def inner():
                 return "nested_ok"
 
-            # 在已有事件循环中运行
             result = run_async(inner())
             assert result == "nested_ok"
         finally:
@@ -222,7 +222,6 @@ class TestBrowserReuse:
             result = await crawler._crawl("https://example.com")
 
         assert result["success"] is True
-        # 关键断言：AsyncWebCrawler 只应创建一次（__init__ 只调用一次）
         assert mock_cls.call_count == 1
 
     @pytest.mark.asyncio
@@ -282,7 +281,6 @@ class TestCrawlBatchV2:
         assert len(results) == 3
         assert all(r["success"] for r in results)
         assert results[0]["markdown"] == "Content 0"
-        # 验证 arun_many 被调用（不是逐个 arun）
         mock_instance.arun_many.assert_called_once()
 
     @pytest.mark.asyncio
@@ -339,47 +337,36 @@ class TestCrawlBatchV2:
             assert len(results) == 2
             assert results[0]["llm_summary"] == "S0"
             assert results[1]["llm_summary"] == "S1"
-            # 只对成功的做 LLM
             mock_llm.assert_called_once()
 
 
 # ============================================================
-# 5. crawl_site — 深度爬取（BFSDeepCrawlStrategy）
+# 5. crawl_site — 深度爬取（BFSDeepCrawlStrategy + arun）
 # ============================================================
 
 
 class TestCrawlSiteV2:
-    """测试整站深度爬取 — 使用 BFSDeepCrawlStrategy"""
+    """测试整站深度爬取 — 使用 BFSDeepCrawlStrategy + arun()"""
 
     @pytest.mark.asyncio
     async def test_crawl_site_uses_deep_crawl_strategy(self):
-        """整站爬取应使用深度爬取策略而非手动递归"""
+        """整站爬取应通过 config.deep_crawl_strategy 使用 BFSDeepCrawlStrategy"""
         from crawl4ai_mcp.crawler import Crawler
 
         crawler = Crawler()
-
-        mock_strategy_results = [
-            MagicMock(
-                success=True,
-                markdown=MagicMock(raw_markdown="Home page"),
-                metadata={"title": "Home"},
-            ),
-            MagicMock(
-                success=True,
-                markdown=MagicMock(raw_markdown="About page"),
-                metadata={"title": "About"},
-            ),
-        ]
+        mock_result = MagicMock(
+            success=True,
+            markdown=MagicMock(raw_markdown="# Home\nContent"),
+            metadata={"title": "Home Page"},
+        )
 
         with (
             patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy") as mock_strategy_cls,
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
         ):
-            mock_strategy = MagicMock()
-            mock_strategy_cls.return_value = mock_strategy
-
+            mock_strategy_cls.return_value = MagicMock()
             mock_instance = AsyncMock()
-            mock_instance.arun_many.return_value = mock_strategy_results
+            mock_instance.arun.return_value = mock_result
             mock_cm = AsyncMock()
             mock_cm.__aenter__.return_value = mock_instance
             mock_cm.__aexit__ = AsyncMock()
@@ -389,32 +376,26 @@ class TestCrawlSiteV2:
                 "https://example.com", depth=2, pages=10, concurrent=3
             )
 
-        # 验证使用了 BFSDeepCrawlStrategy
         mock_strategy_cls.assert_called_once()
-        call_kwargs = mock_strategy_cls.call_args
-        assert (
-            call_kwargs.kwargs.get("max_depth") == 2
-            or call_kwargs[1].get("max_depth") == 2
+        call_kwargs = (
+            mock_strategy_cls.call_args[1] if mock_strategy_cls.call_args else {}
         )
-
-        assert result["successful_pages"] == 2
-        assert result["total_pages"] == 2
+        assert call_kwargs.get("max_depth") == 2
+        assert call_kwargs.get("max_pages") == 10
+        assert result["successful_pages"] == 1
+        assert result["total_pages"] == 1
 
     @pytest.mark.asyncio
     async def test_crawl_site_respects_page_limit(self):
-        """整站爬取应遵守最大页面数限制"""
+        """整站爬取应通过 max_pages 限制页面数"""
         from crawl4ai_mcp.crawler import Crawler
 
         crawler = Crawler()
-
-        many_results = [
-            MagicMock(
-                success=True,
-                markdown=MagicMock(raw_markdown=f"Page {i}"),
-                metadata={"title": f"P{i}"},
-            )
-            for i in range(20)
-        ]
+        mock_result = MagicMock(
+            success=True,
+            markdown=MagicMock(raw_markdown="Page content"),
+            metadata={"title": "Page"},
+        )
 
         with (
             patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy") as mock_strategy_cls,
@@ -422,7 +403,7 @@ class TestCrawlSiteV2:
         ):
             mock_strategy_cls.return_value = MagicMock()
             mock_instance = AsyncMock()
-            mock_instance.arun_many.return_value = many_results
+            mock_instance.arun.return_value = mock_result
             mock_cm = AsyncMock()
             mock_cm.__aenter__.return_value = mock_instance
             mock_cm.__aexit__ = AsyncMock()
@@ -432,28 +413,24 @@ class TestCrawlSiteV2:
                 "https://example.com", depth=3, pages=5, concurrent=2
             )
 
-        # 结果数应受限于 pages 参数（或由策略控制）
-        assert result["total_pages"] <= 20
+        call_kwargs = (
+            mock_strategy_cls.call_args[1] if mock_strategy_cls.call_args else {}
+        )
+        assert call_kwargs.get("max_pages") == 5
+        assert result["total_pages"] == 1
 
     @pytest.mark.asyncio
-    async def test_crawl_site_handles_partial_failures(self):
-        """部分页面失败时应正确统计成功率"""
+    async def test_crawl_site_handles_failure(self):
+        """爬取失败时应返回错误信息"""
         from crawl4ai_mcp.crawler import Crawler
 
         crawler = Crawler()
-
-        mixed_results = [
-            MagicMock(success=True, markdown=MagicMock(raw_markdown="OK"), metadata={}),
-            MagicMock(
-                success=False,
-                markdown=MagicMock(raw_markdown=""),
-                error_message="404",
-                metadata={},
-            ),
-            MagicMock(
-                success=True, markdown=MagicMock(raw_markdown="OK2"), metadata={}
-            ),
-        ]
+        mock_result = MagicMock(
+            success=False,
+            markdown=MagicMock(raw_markdown=""),
+            error_message="Timeout",
+            metadata={},
+        )
 
         with (
             patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy") as mock_strategy_cls,
@@ -461,7 +438,7 @@ class TestCrawlSiteV2:
         ):
             mock_strategy_cls.return_value = MagicMock()
             mock_instance = AsyncMock()
-            mock_instance.arun_many.return_value = mixed_results
+            mock_instance.arun.return_value = mock_result
             mock_cm = AsyncMock()
             mock_cm.__aenter__.return_value = mock_instance
             mock_cm.__aexit__ = AsyncMock()
@@ -469,9 +446,9 @@ class TestCrawlSiteV2:
 
             result = await crawler._crawl_site("https://example.com")
 
-        assert result["successful_pages"] == 2
-        assert result["total_pages"] == 3
-        assert "66.7%" in result["success_rate"]  # 2/3 ≈ 66.7%
+        assert result["successful_pages"] == 0
+        assert result["total_pages"] == 1
+        assert result["success_rate"] == "0.0%"
 
 
 # ============================================================

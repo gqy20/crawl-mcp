@@ -161,6 +161,9 @@ class Crawler:
         self, items: List[Dict], instruction: str, schema=None, max_concurrent=3
     ) -> List[Dict]:
         """使用原生 LLMExtractionStrategy 并行做批量后处理"""
+        if not items:
+            return []
+
         import concurrent.futures
 
         llm_cfg = _build_llm_config()

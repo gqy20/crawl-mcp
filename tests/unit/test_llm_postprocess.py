@@ -23,7 +23,10 @@ class TestLLMPostProcess:
             }
         ]
 
-        with patch("crawl4ai_mcp.crawler.LLMExtractionStrategy") as MockStrategy:
+        with (
+            patch("crawl4ai_mcp.crawler._build_llm_config", return_value=MagicMock()),
+            patch("crawl4ai_mcp.crawler.LLMExtractionStrategy") as MockStrategy,
+        ):
             mock_instance = MagicMock()
             mock_instance.extract.return_value = mock_response
             MockStrategy.return_value = mock_instance
@@ -46,7 +49,10 @@ class TestLLMPostProcess:
 
         mock_response = [{"product": "iPhone 15", "price": "$999", "error": False}]
 
-        with patch("crawl4ai_mcp.crawler.LLMExtractionStrategy") as MockStrategy:
+        with (
+            patch("crawl4ai_mcp.crawler._build_llm_config", return_value=MagicMock()),
+            patch("crawl4ai_mcp.crawler.LLMExtractionStrategy") as MockStrategy,
+        ):
             mock_instance = MagicMock()
             mock_instance.extract.return_value = mock_response
             MockStrategy.return_value = mock_instance

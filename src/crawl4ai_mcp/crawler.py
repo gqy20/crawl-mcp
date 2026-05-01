@@ -140,7 +140,15 @@ class Crawler:
 
             if schema:
                 try:
-                    return {"success": True, "data": json.loads(result_text)}
+                    cleaned = result_text.strip()
+                    if cleaned.startswith("```"):
+                        lines = cleaned.split("\n")
+                        cleaned = "\n".join(
+                            line
+                            for line in lines[1:]
+                            if not line.strip().startswith("```")
+                        )
+                    return {"success": True, "data": json.loads(cleaned)}
                 except json.JSONDecodeError:
                     return {"success": True, "content": result_text}
             return {"success": True, "summary": result_text}
@@ -184,7 +192,15 @@ class Crawler:
 
                     if schema:
                         try:
-                            return {"success": True, "data": json.loads(result_text)}
+                            cleaned = result_text.strip()
+                            if cleaned.startswith("```"):
+                                lines = cleaned.split("\n")
+                                cleaned = "\n".join(
+                                    line
+                                    for line in lines[1:]
+                                    if not line.strip().startswith("```")
+                                )
+                            return {"success": True, "data": json.loads(cleaned)}
                         except json.JSONDecodeError:
                             return {"success": True, "content": result_text}
                     return {"success": True, "summary": result_text}

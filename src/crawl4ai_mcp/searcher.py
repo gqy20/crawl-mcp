@@ -90,6 +90,30 @@ class Searcher:
                 "error": str(e),
             }
 
+    def search_books(
+        self,
+        query: str,
+        region: str = "wt-wt",
+        max_results: int = 10,
+    ) -> Dict[str, Any]:
+        """图书搜索"""
+        return self._search_wrapper(
+            lambda ddgs, **kw: ddgs.books(**kw), query, max_results=max_results
+        )
+
+    def search_videos(
+        self,
+        query: str,
+        region: str = "wt-wt",
+        safesearch: str = "moderate",
+        timelimit: Optional[str] = None,
+        max_results: int = 10,
+    ) -> Dict[str, Any]:
+        """视频搜索"""
+        return self._search_wrapper(
+            lambda ddgs, **kw: ddgs.videos(**kw), query, max_results=max_results
+        )
+
     def search_images(
         self,
         query: str,

@@ -201,6 +201,54 @@ def search_news(
 
 
 @mcp.tool
+def search_books(
+    query: str,
+    region: str = "wt-wt",
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """
+    搜索图书
+
+    适用于查找技术书籍、学术资料、电子书等。
+
+    Args:
+        query: 搜索关键词
+        region: 区域代码（同 search_text）
+        max_results: 最大结果数（默认：10）
+
+    Returns:
+        包含搜索结果的字典，格式同 search_text
+    """
+    return _searcher.search_books(query, region, max_results)
+
+
+@mcp.tool
+def search_videos(
+    query: str,
+    region: str = "wt-wt",
+    safesearch: str = "moderate",
+    timelimit: Optional[str] = None,
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """
+    搜索视频
+
+    适用于查找教程视频、演示视频、课程录像等。
+
+    Args:
+        query: 搜索关键词
+        region: 区域代码（同 search_text）
+        safesearch: 安全搜索 (on/moderate/off)
+        timelimit: 时间限制 (d=天, w=周)
+        max_results: 最大结果数（默认：10）
+
+    Returns:
+        包含搜索结果的字典，格式同 search_text
+    """
+    return _searcher.search_videos(query, region, safesearch, timelimit, max_results)
+
+
+@mcp.tool
 def search_images(
     query: str,
     region: str = "wt-wt",

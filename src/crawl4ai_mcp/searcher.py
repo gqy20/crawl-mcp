@@ -2,9 +2,10 @@
 
 import asyncio
 import base64
+import concurrent.futures
 import requests
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Callable, Dict, Any, Optional, List
 from urllib.parse import urlparse
 
 from ddgs import DDGS
@@ -17,17 +18,13 @@ from .utils import run_async
 class Searcher:
     """搜索类 - 提供网页搜索功能"""
 
-    def search_text(
-        self,
-        query: str,
-        region: str = "wt-wt",
-        safesearch: str = "moderate",
-        timelimit: Optional[str] = None,
-        max_results: int = 10,
+    def _search_wrapper(
+        self, search_fn: Callable, query: str, **kwargs
     ) -> Dict[str, Any]:
-        """文本搜索"""
+        """通用搜索包装器，消除 search_text/search_news 的重复逻辑"""
         try:
-            results = list(DDGS().text(query, max_results=max_results))
+            ddgs = DDGS()
+            results = list(search_fn(ddgs, query=query, **kwargs))
             return {
                 "success": True,
                 "query": query,
@@ -42,6 +39,19 @@ class Searcher:
                 "results": [],
             }
 
+    def search_text(
+        self,
+        query: str,
+        region: str = "wt-wt",
+        safesearch: str = "moderate",
+        timelimit: Optional[str] = None,
+        max_results: int = 10,
+    ) -> Dict[str, Any]:
+        """文本搜索"""
+        return self._search_wrapper(
+            lambda ddgs, **kw: ddgs.text(**kw), query, max_results=max_results
+        )
+
     def search_news(
         self,
         query: str,
@@ -51,21 +61,9 @@ class Searcher:
         max_results: int = 10,
     ) -> Dict[str, Any]:
         """新闻搜索"""
-        try:
-            results = list(DDGS().news(query, max_results=max_results))
-            return {
-                "success": True,
-                "query": query,
-                "count": len(results),
-                "results": results,
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "query": query,
-                "error": str(e),
-                "results": [],
-            }
+        return self._search_wrapper(
+            lambda ddgs, **kw: ddgs.news(**kw), query, max_results=max_results
+        )
 
     def search_images(
         self,
@@ -145,18 +143,18 @@ class Searcher:
 
         return result
 
-    def _download_images(self, images: List[Dict], output_dir: str) -> Dict[str, Any]:
-        """下载图片到本地"""
+    def _download_images(
+        self, images: List[Dict], output_dir: str, max_concurrent: int = 3
+    ) -> Dict[str, Any]:
+        """并行下载图片到本地"""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        results = []
-        downloaded = 0
-
-        for i, img in enumerate(images):
+        def download_one(idx_img):
+            i, img = idx_img
             url = img.get("image") or img.get("url")
             if not url:
-                continue
+                return {"success": False, "url": "", "error": "No URL", "__index__": i}
 
             try:
                 ext = self._get_extension(url)
@@ -170,19 +168,28 @@ class Searcher:
                     for chunk in response.iter_content(chunk_size=8192):
                         f.write(chunk)
 
-                results.append(
-                    {
-                        "success": True,
-                        "url": url,
-                        "filepath": str(filepath),
-                        "size": filepath.stat().st_size,
-                    }
-                )
-                downloaded += 1
-
+                return {
+                    "success": True,
+                    "url": url,
+                    "filepath": str(filepath),
+                    "size": filepath.stat().st_size,
+                    "__index__": i,
+                }
             except Exception as e:
-                results.append({"success": False, "url": url, "error": str(e)})
+                return {"success": False, "url": url, "error": str(e), "__index__": i}
 
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=max_concurrent
+        ) as executor:
+            futures = [
+                executor.submit(download_one, (i, img)) for i, img in enumerate(images)
+            ]
+            results = [f.result() for f in futures]
+
+        # 按 __index__ 排序回原顺序
+        results.sort(key=lambda x: x.pop("__index__"))
+
+        downloaded = sum(1 for r in results if r["success"])
         return {
             "total": len(images),
             "downloaded": downloaded,

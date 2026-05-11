@@ -186,3 +186,27 @@ class TestTimeoutMiddlewareIntegration:
         mcp.add_middleware(middleware)
 
         assert middleware in mcp.middleware
+
+    def test_server_has_timeout_middleware_with_extract_url_config(self):
+        """服务器预配置了 extract_url 的短超时（15s）"""
+        from crawl4ai_mcp.fastmcp_server import mcp
+
+        timeout_mw = None
+        for mw in mcp.middleware:
+            if isinstance(mw, TimeoutMiddleware):
+                timeout_mw = mw
+                break
+
+        assert timeout_mw is not None
+        assert timeout_mw.per_tool.get("extract_url") == 15
+        assert timeout_mw.per_tool.get("crawl_single") == 120
+
+    def test_server_default_timeout_is_60s(self):
+        """服务器默认超时为 60 秒"""
+        from crawl4ai_mcp.fastmcp_server import mcp
+
+        timeout_mw = next(
+            (mw for mw in mcp.middleware if isinstance(mw, TimeoutMiddleware)), None
+        )
+        assert timeout_mw is not None
+        assert timeout_mw.default_timeout == 60

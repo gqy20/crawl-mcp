@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional, Union
 from fastmcp import FastMCP
 from crawl4ai_mcp.crawler import Crawler
 from crawl4ai_mcp.searcher import Searcher
+from crawl4ai_mcp.middleware.timeout import TimeoutMiddleware
 
 # 读取包版本
 try:
@@ -15,6 +16,24 @@ except Exception:
 
 # 创建 FastMCP 实例
 mcp = FastMCP(name="crawl-mcp", version=__version__)
+
+# 注册超时中间件：按工具类型配置不同超时限制
+mcp.add_middleware(
+    TimeoutMiddleware(
+        default_timeout=60,
+        per_tool={
+            "extract_url": 15,
+            "search_text": 20,
+            "search_news": 20,
+            "search_books": 20,
+            "search_videos": 20,
+            "search_images": 30,
+            "crawl_single": 120,
+            "crawl_batch": 300,
+            "crawl_site": 300,
+        },
+    )
+)
 
 # 创建爬虫实例（单例）
 _crawler = Crawler()

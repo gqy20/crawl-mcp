@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-05-11
+
+### Added
+- **TimeoutMiddleware**：基于 FastMCP 中间件体系的工具级超时控制
+  - 支持全局默认超时 + 按工具名独立配置
+  - 超时后抛出 `asyncio.TimeoutError`，可被上游中间件自动转换为 McpError
+- 原生 `@mcp.tool(timeout=N)` 装饰器参数（9 个工具全覆盖）
+  - 与 TimeoutMiddleware 形成双层超时防御（内层装饰器 + 外层中间件）
+- 工具标签分组：爬取类 `tags={"crawl"}`，搜索类 `tags={"search"}`
+- `crawl_batch` / `crawl_site` 注入 `ctx: Context` 参数，支持 `ctx.info()` 进度报告
+- FastMCP 3.x 新特性测试套件（22 个测试用例）
+
+### Changed
+- HTTP 传输协议从 `"http"` 升级为 `"streamable-http"`（FastMCP 3.x 推荐传输方式）
+- 超时配置从经验值改为基于 benchmark P95 数据 × 3x 安全倍数校准：
+  - extract_url: 15s (7.5x) | search_text: 30s (3.75x) | search_news: 20s (7.4x)
+  - search_books: 20s (10.5x) | search_videos: 20s (8.3x) | search_images: 30s (10.3x)
+  - crawl_single: 120s (7.1x) | crawl_batch: 300s (27.3x) | crawl_site: 300s (~10x)
+
+### Fixed
+- **extract_url 无限挂起问题**：添加 15s 超时保护，防止 DDGS 网络异常时永久阻塞
+
+### Refactor
+- 测试清理：删除 2 个冗余测试文件（`test_crawler.py`、`test_searcher.py`），合并重叠测试
+  - 净减 589 行代码，测试用例从 102 → 113 个（质量提升）
+- `test_fastmcp_server.py` 重写：覆盖全部 9 个工具的注册、schema 和函数行为验证
+- `test_searcher_refactor.py` 合并：统一 searcher 全部 25 个测试用例
+
 ## [0.1.4] - 2026-05-01
 
 ### Added

@@ -210,3 +210,49 @@ class TestTimeoutMiddlewareIntegration:
         )
         assert timeout_mw is not None
         assert timeout_mw.default_timeout == 60
+
+    def test_all_tool_timeouts_meet_safety_margin(self):
+        """所有工具超时配置应满足 ≥3x 实测 P95 耗时的安全倍数
+
+        基准测试实测 P95 数据（单位：秒）：
+          extract_url: ~2.0   search_text: ~8.0    search_news: ~2.7
+          search_books: ~1.9  search_videos: ~2.4  search_images: ~2.9
+          crawl_single: ~17   crawl_batch: ~11     crawl_site: ~30(估算)
+        """
+        from crawl4ai_mcp.fastmcp_server import mcp
+
+        timeout_mw = next(
+            (mw for mw in mcp.middleware if isinstance(mw, TimeoutMiddleware)), None
+        )
+        assert timeout_mw is not None
+
+        # 基准测试实测 P95（秒），来自 bench_tools.py
+        p95_bench = {
+            "extract_url": 2.0,
+            "search_text": 8.0,
+            "search_news": 2.7,
+            "search_books": 1.9,
+            "search_videos": 2.4,
+            "search_images": 2.9,
+            "crawl_single": 17.0,
+            "crawl_batch": 11.0,
+            "crawl_site": 30.0,
+        }
+
+        min_safety_ratio = 3.0
+        violations = []
+        for tool_name, p95_sec in p95_bench.items():
+            configured = timeout_mw.per_tool.get(tool_name)
+            if configured is None:
+                configured = timeout_mw.default_timeout
+            ratio = configured / p95_sec
+            if ratio < min_safety_ratio:
+                violations.append(
+                    f"{tool_name}: configured={configured}s, "
+                    f"P95={p95_sec}s, ratio={ratio:.1f}x < {min_safety_ratio}x"
+                )
+
+        assert not violations, (
+            "以下工具超时配置不满足安全倍数要求:\n"
+            + "\n".join(f"  - {v}" for v in violations)
+        )

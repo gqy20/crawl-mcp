@@ -4,6 +4,7 @@ import asyncio
 import time
 
 import pytest
+from fastmcp.server.middleware.middleware import MiddlewareContext
 from mcp.types import CallToolRequestParams
 
 from crawl4ai_mcp.middleware.timeout import TimeoutMiddleware
@@ -11,11 +12,13 @@ from crawl4ai_mcp.middleware.timeout import TimeoutMiddleware
 
 def _make_call_tool_context(
     tool_name: str, arguments: dict | None = None
-) -> CallToolRequestParams:
-    """构造 tools/call 请求上下文"""
-    return CallToolRequestParams(
-        name=tool_name,
-        arguments=arguments or {},
+) -> MiddlewareContext[CallToolRequestParams]:
+    """构造 tools/call 请求上下文（包装为 MiddlewareContext）"""
+    return MiddlewareContext(
+        message=CallToolRequestParams(
+            name=tool_name,
+            arguments=arguments or {},
+        ),
     )
 
 
@@ -26,7 +29,7 @@ class TestTimeoutMiddlewareBasic:
         """超过超时限制的工具调用应被取消"""
         middleware = TimeoutMiddleware(default_timeout=1)
 
-        async def slow_tool(context, call_next):
+        async def slow_tool(context):
             await asyncio.sleep(10)
             return "should not reach here"
 
@@ -39,7 +42,7 @@ class TestTimeoutMiddlewareBasic:
         """在超时限制内完成的工具应正常返回"""
         middleware = TimeoutMiddleware(default_timeout=5)
 
-        async def fast_tool(context, call_next):
+        async def fast_tool(context):
             await asyncio.sleep(0.1)
             return {"success": True}
 
@@ -52,7 +55,7 @@ class TestTimeoutMiddlewareBasic:
         """timeout=0 表示不设超时限制"""
         middleware = TimeoutMiddleware(default_timeout=0)
 
-        async def normal_tool(context, call_next):
+        async def normal_tool(context):
             await asyncio.sleep(0.2)
             return "ok"
 
@@ -65,7 +68,7 @@ class TestTimeoutMiddlewareBasic:
         """timeout<0 表示不设超时限制"""
         middleware = TimeoutMiddleware(default_timeout=-1)
 
-        async def normal_tool(context, call_next):
+        async def normal_tool(context):
             return "ok"
 
         context = _make_call_tool_context("normal_tool")
@@ -84,7 +87,7 @@ class TestTimeoutMiddlewarePerTool:
             per_tool={"extract_url": 1},
         )
 
-        async def slow_extract(context, call_next):
+        async def slow_extract(context):
             await asyncio.sleep(10)
             return "should not reach here"
 
@@ -100,7 +103,7 @@ class TestTimeoutMiddlewarePerTool:
             per_tool={"extract_url": 1},
         )
 
-        async def crawl_single(context, call_next):
+        async def crawl_single(context):
             await asyncio.sleep(0.2)
             return {"markdown": "# Test"}
 
@@ -116,7 +119,7 @@ class TestTimeoutMiddlewarePerTool:
             per_tool={"extract_url": 30},
         )
 
-        async def unknown_tool(context, call_next):
+        async def unknown_tool(context):
             await asyncio.sleep(10)
             return "should not reach here"
 
@@ -133,16 +136,13 @@ class TestTimeoutMiddlewareEdgeCases:
         """同步阻塞工具也应受超时控制（通过线程池执行）"""
         middleware = TimeoutMiddleware(default_timeout=1)
 
-        def blocking_tool(context, call_next):
+        def blocking_sync():
             time.sleep(10)
             return "should not reach here"
 
-        # 同步函数需要包装为异步
-        async def sync_wrapper(context, call_next):
+        async def sync_wrapper(context):
             loop = asyncio.get_event_loop()
-            return await loop.run_in_executor(
-                None, lambda: blocking_tool(context, call_next)
-            )
+            return await loop.run_in_executor(None, blocking_sync)
 
         context = _make_call_tool_context("blocking_tool")
 
@@ -153,7 +153,7 @@ class TestTimeoutMiddlewareEdgeCases:
         """工具本身的异常应在超时前正常抛出"""
         middleware = TimeoutMiddleware(default_timeout=10)
 
-        async def failing_tool(context, call_next):
+        async def failing_tool(context):
             raise ValueError("tool error")
 
         context = _make_call_tool_context("failing_tool")
@@ -165,7 +165,7 @@ class TestTimeoutMiddlewareEdgeCases:
         """恰好在超时边界完成的工具应正常返回"""
         middleware = TimeoutMiddleware(default_timeout=2)
 
-        async def boundary_tool(context, call_next):
+        async def boundary_tool(context):
             await asyncio.sleep(1.5)
             return "just in time"
 

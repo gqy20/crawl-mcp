@@ -1,7 +1,7 @@
 """FastMCP 服务器实现"""
 
 from typing import List, Dict, Any, Optional, Union
-from fastmcp import FastMCP
+from fastmcp import FastMCP, Context
 from crawl4ai_mcp.crawler import Crawler
 from crawl4ai_mcp.searcher import Searcher
 from crawl4ai_mcp.middleware.timeout import TimeoutMiddleware
@@ -42,7 +42,7 @@ _crawler = Crawler()
 _searcher = Searcher()
 
 
-@mcp.tool
+@mcp.tool(timeout=15, tags={"search"})
 def extract_url(
     url: str,
     fmt: str = "text_markdown",
@@ -68,7 +68,7 @@ def extract_url(
     return _searcher.extract_url(url, fmt)
 
 
-@mcp.tool
+@mcp.tool(timeout=120, tags={"crawl"})
 def crawl_single(
     url: str,
     enhanced: bool = False,
@@ -91,13 +91,14 @@ def crawl_single(
     return _crawler.crawl_single(url, enhanced, llm_config)
 
 
-@mcp.tool
+@mcp.tool(timeout=300, tags={"crawl"})
 def crawl_site(
     url: str,
     depth: int = 2,
     pages: int = 10,
     concurrent: int = 3,
     llm_config: Optional[Union[Dict[str, Any], str]] = None,
+    ctx: Context | None = None,
 ) -> Dict[str, Any]:
     """
     递归爬取整个网站
@@ -112,15 +113,23 @@ def crawl_site(
     Returns:
         包含 successful_pages, total_pages, success_rate, results 的字典
     """
-    return _crawler.crawl_site(url, depth, pages, concurrent)
+    if ctx:
+        ctx.info(f"开始爬取站点: {url} (深度={depth}, 最大页面={pages})")
+    result = _crawler.crawl_site(url, depth, pages, concurrent)
+    if ctx:
+        ctx.info(
+            f"站点爬取完成: {result.get('successful_pages', 0)}/{result.get('total_pages', 0)} 页成功"
+        )
+    return result
 
 
-@mcp.tool
+@mcp.tool(timeout=300, tags={"crawl"})
 def crawl_batch(
     urls: List[str],
     concurrent: int = 3,
     llm_config: Optional[Union[Dict[str, Any], str]] = None,
     llm_concurrent: int = 3,
+    ctx: Context | None = None,
 ) -> List[Dict[str, Any]]:
     """
     批量爬取多个网页（异步并行）
@@ -134,10 +143,16 @@ def crawl_batch(
     Returns:
         爬取结果列表
     """
-    return _crawler.crawl_batch(urls, concurrent, llm_config, llm_concurrent)
+    if ctx:
+        ctx.info(f"开始批量爬取: {len(urls)} 个 URL (并发={concurrent})")
+    result = _crawler.crawl_batch(urls, concurrent, llm_config, llm_concurrent)
+    if ctx:
+        success_count = sum(1 for r in result if r.get("success"))
+        ctx.info(f"批量爬取完成: {success_count}/{len(result)} 个成功")
+    return result
 
 
-@mcp.tool
+@mcp.tool(timeout=30, tags={"search"})
 def search_text(
     query: str,
     region: str = "wt-wt",
@@ -177,7 +192,7 @@ def search_text(
     return _searcher.search_text(query, region, safesearch, timelimit, max_results)
 
 
-@mcp.tool
+@mcp.tool(timeout=20, tags={"search"})
 def search_news(
     query: str,
     region: str = "wt-wt",
@@ -219,7 +234,7 @@ def search_news(
     return _searcher.search_news(query, region, safesearch, timelimit, max_results)
 
 
-@mcp.tool
+@mcp.tool(timeout=20, tags={"search"})
 def search_books(
     query: str,
     region: str = "wt-wt",
@@ -241,7 +256,7 @@ def search_books(
     return _searcher.search_books(query, region, max_results)
 
 
-@mcp.tool
+@mcp.tool(timeout=20, tags={"search"})
 def search_videos(
     query: str,
     region: str = "wt-wt",
@@ -267,7 +282,7 @@ def search_videos(
     return _searcher.search_videos(query, region, safesearch, timelimit, max_results)
 
 
-@mcp.tool
+@mcp.tool(timeout=30, tags={"search"})
 def search_images(
     query: str,
     region: str = "wt-wt",
@@ -369,7 +384,7 @@ def main():
 
     # 默认使用 STDIO，但支持通过参数指定 HTTP
     if "--http" in sys.argv:
-        mcp.run(transport="http", host="0.0.0.0", port=8001)
+        mcp.run(transport="streamable-http", host="0.0.0.0", port=8001)
     else:
         mcp.run()
 

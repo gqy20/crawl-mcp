@@ -23,7 +23,7 @@ mcp.add_middleware(
         default_timeout=60,
         per_tool={
             "extract_url": 15,
-            "search_text": 20,
+            "search_text": 30,
             "search_news": 20,
             "search_books": 20,
             "search_videos": 20,

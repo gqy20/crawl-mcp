@@ -252,7 +252,6 @@ class TestTimeoutMiddlewareIntegration:
                     f"P95={p95_sec}s, ratio={ratio:.1f}x < {min_safety_ratio}x"
                 )
 
-        assert not violations, (
-            "以下工具超时配置不满足安全倍数要求:\n"
-            + "\n".join(f"  - {v}" for v in violations)
+        assert not violations, "以下工具超时配置不满足安全倍数要求:\n" + "\n".join(
+            f"  - {v}" for v in violations
         )

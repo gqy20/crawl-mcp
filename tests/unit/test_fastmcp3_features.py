@@ -28,12 +28,12 @@ class TestNativeToolTimeout:
     """验证每个工具通过原生装饰器配置了 timeout"""
 
     # 基于 benchmark P95 数据 × 3x 安全倍数校准的超时值（秒）
-    # v0.2.0 降级：LLM 后处理为可选插件，爬取工具超时相应降低
+    # v0.2.0 统一降级：crawl_single/crawl_batch 含快速提取+浏览器 fallback 两阶段
+    # extract_url 已合并到 crawl_single，不再独立工具
     EXPECTED_TIMEOUTS = {
-        "extract_url": 15,
-        "crawl_single": 60,
+        "crawl_single": 75,
         "crawl_site": 120,
-        "crawl_batch": 120,
+        "crawl_batch": 180,
         "search_text": 30,
         "search_news": 20,
         "search_books": 20,
@@ -66,7 +66,6 @@ class TestToolTags:
 
     CRAWL_TOOLS = {"crawl_single", "crawl_batch", "crawl_site"}
     SEARCH_TOOLS = {
-        "extract_url",
         "search_text",
         "search_news",
         "search_books",

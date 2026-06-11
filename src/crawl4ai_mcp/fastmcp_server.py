@@ -22,60 +22,38 @@ mcp.add_middleware(
     TimeoutMiddleware(
         default_timeout=60,
         per_tool={
-            "extract_url": 15,
             "search_text": 30,
             "search_news": 20,
             "search_books": 20,
             "search_videos": 20,
             "search_images": 30,
-            "crawl_single": 60,
-            "crawl_batch": 120,
+            "crawl_single": 75,
+            "crawl_batch": 180,
             "crawl_site": 120,
         },
     )
 )
 
-# 创建爬虫实例（单例）
-_crawler = Crawler()
-
 # 创建搜索器实例（单例）
 _searcher = Searcher()
 
-
-@mcp.tool(timeout=15, tags={"search"})
-def extract_url(
-    url: str,
-    fmt: str = "text_markdown",
-) -> Dict[str, Any]:
-    """
-    轻量级提取网页内容（无需浏览器，速度快 5-10 倍）
-
-    基于 ddgs.extract() 实现，适用于静态页面、文章、博客等不需要 JS 渲染的场景。
-    如需爬取 SPA 或 JS 重度渲染的页面，请使用 crawl_single。
-
-    Args:
-        url: 要提取的网页 URL
-        fmt: 输出格式:
-            - text_markdown: Markdown 格式（默认）
-            - text_plain: 纯文本
-            - text_rich: 富文本
-            - text: 原始 HTML
-            - content: 原始字节
-
-    Returns:
-        包含 success, url, content, fmt, (可选) error 的字典
-    """
-    return _searcher.extract_url(url, fmt)
+# 创建爬虫实例（单例，注入共享 searcher 用于快速提取降级）
+_crawler = Crawler(searcher=_searcher)
 
 
-@mcp.tool(timeout=60, tags={"crawl"})
+@mcp.tool(timeout=75, tags={"crawl"})
 def crawl_single(
     url: str,
     enhanced: bool = False,
     llm_config: Optional[Union[Dict[str, Any], str]] = None,
+    prefer_fast: bool = True,
+    min_content_length: int = 200,
 ) -> Dict[str, Any]:
     """
-    爬取单个网页，返回 Markdown 格式内容
+    爬取单个网页（自动降级：快速提取 → 浏览器渲染）
+
+    默认先尝试轻量级提取（~0.5s），失败或内容不足时自动切换到浏览器模式（~15-23s）。
+    如需强制使用浏览器（如已知目标为 SPA），设置 prefer_fast=False。
 
     Args:
         url: 要爬取的网页 URL
@@ -86,11 +64,23 @@ def crawl_single(
             - JSON 字符串: '{"instruction": "总结"}'
             - 纯文本: "总结页面内容"（自动作为 instruction）
             未设置 API Key 时传此参数会优雅跳过，结果中包含 llm_skipped 提示。
+        prefer_fast: 是否优先尝试快速提取（默认 True，设为 False 强制用浏览器）
+        min_content_length: 快速提取结果的最小内容长度阈值（默认 200 字符）
 
     Returns:
-        包含 success, markdown, title, error, (可选) llm_summary/llm_data/llm_skipped 的字典
+        {
+            success: bool,
+            markdown: str,
+            title: str,
+            error: str | None,
+            method: "fast_extract" | "browser_fallback",   # 新增
+            fallback_reason: str | None,                   # 新增（仅 browser_fallback 时）
+            llm_summary/llm_data/llm_skipped/llm_error: ...  # 可选 LLM 字段
+        }
     """
-    return _crawler.crawl_single(url, enhanced, llm_config)
+    return _crawler.crawl_single(
+        url, enhanced, llm_config, prefer_fast, min_content_length
+    )
 
 
 @mcp.tool(timeout=120, tags={"crawl"})
@@ -123,29 +113,38 @@ def crawl_site(
     return result
 
 
-@mcp.tool(timeout=120, tags={"crawl"})
+@mcp.tool(timeout=180, tags={"crawl"})
 def crawl_batch(
     urls: List[str],
     concurrent: int = 3,
     llm_config: Optional[Union[Dict[str, Any], str]] = None,
     llm_concurrent: int = 3,
+    prefer_fast: bool = True,
+    min_content_length: int = 200,
     ctx: Context | None = None,
 ) -> List[Dict[str, Any]]:
     """
-    批量爬取多个网页（异步并行）
+    批量爬取多个网页（自动降级版）
+
+    默认对每个 URL 先尝试快速提取，失败或内容不足时自动 fallback 到浏览器渲染。
+    设置 prefer_fast=False 可退化到纯浏览器模式。
 
     Args:
         urls: URL 列表
         concurrent: 网页爬取并发数（默认：3）
         llm_config: [实验性] LLM 后处理配置（可选），需设置 CRAWL_MCP_API_KEY 才生效
         llm_concurrent: LLM 处理并发数（默认：3）
+        prefer_fast: 是否优先尝试快速提取（默认 True）
+        min_content_length: 快速提取最小内容长度阈值（默认 200 字符）
 
     Returns:
-        爬取结果列表
+        爬取结果列表，每项含 method / fallback_reason 等字段
     """
     if ctx:
         ctx.info(f"开始批量爬取: {len(urls)} 个 URL (并发={concurrent})")
-    result = _crawler.crawl_batch(urls, concurrent, llm_config, llm_concurrent)
+    result = _crawler.crawl_batch(
+        urls, concurrent, llm_config, llm_concurrent, prefer_fast, min_content_length
+    )
     if ctx:
         success_count = sum(1 for r in result if r.get("success"))
         ctx.info(f"批量爬取完成: {success_count}/{len(result)} 个成功")

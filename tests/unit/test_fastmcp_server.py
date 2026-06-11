@@ -24,7 +24,6 @@ class TestAllToolsRegistered:
 
     def test_all_expected_tools_present(self):
         expected = {
-            "extract_url",
             "crawl_single",
             "crawl_site",
             "crawl_batch",
@@ -40,7 +39,6 @@ class TestAllToolsRegistered:
 
     def test_no_extra_tools(self):
         expected = {
-            "extract_url",
             "crawl_single",
             "crawl_site",
             "crawl_batch",
@@ -83,12 +81,6 @@ class TestCrawlToolSchemas:
 class TestSearchToolSchemas:
     """搜索类工具参数 schema 验证"""
 
-    def test_extract_url_has_url_and_fmt(self):
-        tool = _get_tool("extract_url")
-        sig = inspect.signature(tool.fn)
-        assert "url" in sig.parameters
-        assert "fmt" in sig.parameters
-
     def test_search_text_has_query_and_max_results(self):
         tool = _get_tool("search_text")
         sig = inspect.signature(tool.fn)
@@ -108,7 +100,9 @@ class TestCrawlToolFunctions:
     def test_crawl_single_returns_result(self):
         from crawl4ai_mcp.fastmcp_server import _crawler
 
-        def mock(url, enhanced, llm_config=None):
+        def mock(
+            url, enhanced, llm_config=None, prefer_fast=True, min_content_length=200
+        ):
             return {"success": True, "markdown": "# T", "title": "T"}
 
         with patch.object(_crawler, "crawl_single", side_effect=mock):
@@ -128,7 +122,14 @@ class TestCrawlToolFunctions:
     def test_crawl_batch_returns_list(self):
         from crawl4ai_mcp.fastmcp_server import _crawler
 
-        def mock(urls, concurrent=3, llm_config=None, llm_concurrent=3):
+        def mock(
+            urls,
+            concurrent=3,
+            llm_config=None,
+            llm_concurrent=3,
+            prefer_fast=True,
+            min_content_length=200,
+        ):
             return [{"success": True, "markdown": "# A"}]
 
         with patch.object(_crawler, "crawl_batch", side_effect=mock):
@@ -138,21 +139,6 @@ class TestCrawlToolFunctions:
 
 class TestSearchToolFunctions:
     """搜索工具函数行为验证"""
-
-    def test_extract_url_returns_content(self):
-        from crawl4ai_mcp.fastmcp_server import _searcher
-
-        with patch.object(
-            _searcher,
-            "extract_url",
-            return_value={
-                "success": True,
-                "content": "<h1>Hi</h1>",
-                "fmt": "text_markdown",
-            },
-        ):
-            result = _get_tool("extract_url").fn("https://example.com")
-        assert result["content"] == "<h1>Hi</h1>"
 
     def test_search_text_returns_results(self):
         from crawl4ai_mcp.fastmcp_server import _searcher

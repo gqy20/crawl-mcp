@@ -187,8 +187,8 @@ class TestTimeoutMiddlewareIntegration:
 
         assert middleware in mcp.middleware
 
-    def test_server_has_timeout_middleware_with_extract_url_config(self):
-        """服务器预配置了 extract_url 的短超时（15s）"""
+    def test_server_has_crawl_single_configured(self):
+        """服务器预配置了 crawl_single 的超时（75s，含快速提取+浏览器 fallback）"""
         from crawl4ai_mcp.fastmcp_server import mcp
 
         timeout_mw = None
@@ -198,8 +198,7 @@ class TestTimeoutMiddlewareIntegration:
                 break
 
         assert timeout_mw is not None
-        assert timeout_mw.per_tool.get("extract_url") == 15
-        assert timeout_mw.per_tool.get("crawl_single") == 60
+        assert timeout_mw.per_tool.get("crawl_single") == 75
 
     def test_server_default_timeout_is_60s(self):
         """服务器默认超时为 60 秒"""
@@ -227,8 +226,8 @@ class TestTimeoutMiddlewareIntegration:
         assert timeout_mw is not None
 
         # 基准测试实测 P95（秒），来自 bench_tools.py
+        # v0.2.0: extract_url 已合并到 crawl_single，不再独立工具
         p95_bench = {
-            "extract_url": 2.0,
             "search_text": 8.0,
             "search_news": 2.7,
             "search_books": 1.9,

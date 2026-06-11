@@ -8,10 +8,9 @@
 ## 功能
 
 ### 爬取工具
-- **crawl_single** - 爬取单个网页，返回 Markdown 格式（浏览器渲染，适合 SPA）
-- **extract_url** - 轻量级 URL 提取（无需浏览器，速度快 5-10 倍）
+- **crawl_single** - 单页爬取（**自动降级**：快速提取 → 浏览器渲染）
 - **crawl_site** - 递归爬取整个网站
-- **crawl_batch** - 批量爬取多个网页（异步并行）
+- **crawl_batch** - 批量爬取（**自动降级**，三阶段并行优化）
 
 ### 搜索工具
 - **search_text** - 通用网页搜索
@@ -28,16 +27,20 @@
 
 ## 性能
 
+`crawl_single` / `crawl_batch` 内置自动降级：静态页走快速路径（~0.5s），SPA 自动 fallback 到浏览器。
+
 | 场景 | 耗时 | 说明 |
 |------|------|------|
-| extract_url（静态页面） | **~1.5s** | ddgs extract，无需浏览器 |
-| crawl_single（纯爬取） | ~7-12s | 浏览器渲染 |
-| crawl_batch 2 页（纯爬取） | ~12-15s | 并行爬取 |
+| crawl_single（静态博客） | **~0.5s** | 快速提取路径 |
+| crawl_single（SPA 网站） | ~0.6s + ~23s | 快速检测失败 → 浏览器降级 |
+| crawl_batch 10 页（全静态） | **~0.5s** | 并行快速提取 |
+| crawl_batch 10 页（混合） | ~24s | 静态页快速 + SPA 浏览器 |
 | search_text / news / books / videos | **~1.5-2s** | ddgs 搜索 |
 
 **关键优势**：
-- 静态页面用 `extract_url`，1.5 秒出结果
-- SPA/JS 重度页面用 `crawl_single`，浏览器渲染保证完整
+- **无需手动选择工具**：`crawl_single` 自动判断用快速提取还是浏览器
+- 静态页面享受亚秒级速度，SPA 自动降级保证完整性
+- 批量爬取智能分流：静态 URL 并行快提取，失败项才走浏览器
 - 搜索类工具全部基于 ddgs，秒级响应
 - 无需配置任何 API Key 即可使用核心功能
 
@@ -116,28 +119,35 @@ pip install crawl-mcp
 
 ## 搜索功能
 
-### extract_url - 轻量级 URL 提取
+### crawl_single - 单页爬取（自动降级）
 
-适用于静态页面、文章、博客等不需要 JS 渲染的场景。
+**推荐使用**。内置「快速提取 → 浏览器渲染」自动降级策略：
 
 ```json
 {
-  "name": "extract_url",
+  "name": "crawl_single",
   "arguments": {
-    "url": "https://example.com/article",
-    "fmt": "text_markdown"
+    "url": "https://example.com/article"
   }
 }
 ```
 
-**参数说明**：
-- `url`: 要提取的网页 URL
-- `fmt`: 输出格式（可选）
-  - `text_markdown`: Markdown 格式（默认）
-  - `text_plain`: 纯文本
-  - `text_rich`: 富文本
-  - `text`: 原始 HTML
-  - `content`: 原始字节
+**返回示例**：
+```json
+{
+  "success": true,
+  "markdown": "# Article Title\n\nContent...",
+  "title": "Article Title",
+  "method": "fast_extract",
+  "fallback_reason": null
+}
+```
+
+**可选参数**：
+- `enhanced`: 是否使用增强模式（适用于 SPA，默认 false，SPA 检测时自动启用）
+- `prefer_fast`: 是否优先快速提取（默认 true，设 false 强制浏览器）
+- `min_content_length`: 快速提取最小内容长度阈值（默认 200 字符）
+- `llm_config`: LLM 后处理配置（实验性，需 API Key）
 
 ### search_text - 通用网页搜索
 

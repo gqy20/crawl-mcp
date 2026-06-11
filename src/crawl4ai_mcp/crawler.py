@@ -1,12 +1,16 @@
 """Crawler 类 - 核心爬虫逻辑
 
-两阶段设计：
-  阶段 1：快速爬取（始终执行，返回原始 Markdown）
+三级设计：
+  阶段 0：快速提取（ddgs.extract，~0.5s，静态页首选）
+  阶段 1：浏览器渲染爬取（Playwright，SPA/动态页）
   阶段 2：可选 LLM 后处理（仅当提供 llm_config 且 CRAWL_MCP_API_KEY 已配置时执行）
+
+crawl_single / crawl_batch 自动降级：先尝试阶段 0，失败或内容不足时 fallback 到阶段 1。
 """
 
 import asyncio
 import json
+import re
 from typing import List, Dict, Any, Optional
 
 from crawl4ai import (
@@ -20,7 +24,22 @@ from crawl4ai.extraction_strategy import LLMExtractionStrategy
 from crawl4ai.types import create_llm_config
 
 from .llm_config import get_default_llm_config
+from .searcher import Searcher
 from .utils import run_async
+
+
+# ── 常量 ────────────────────────────────────────────────────────
+
+MIN_CONTENT_LENGTH_DEFAULT = 200  # 快速提取结果低于此阈值触发降级
+
+SPA_INDICATORS = [
+    '<div id="app"',
+    '<div id="root"',
+    "__next_data__",  # Next.js
+    "nuxt-app",  # Nuxt.js
+    '<div id="vue"',  # Vue.js
+    "ng-app",  # Angular
+]
 
 
 def _calculate_success_rate(results: List[Dict[str, Any]]) -> str:
@@ -73,10 +92,73 @@ def _llm_available() -> bool:
 class Crawler:
     """统一的爬虫类，整合单页、整站、批量爬取功能
 
-    LLM 后处理为可选插件功能：
-      - 不配置 CRAWL_MCP_API_KEY → 纯爬取工具，传 llm_config 会优雅跳过
-      - 配置 CRAWL_MCP_API_KEY → 可使用两阶段处理（爬取 + LLM 摘要/提取）
+    自动降级策略：
+      - 默认先尝试快速提取（ddgs.extract, ~0.5s）
+      - 失败或内容不足时自动 fallback 到浏览器渲染（Playwright, ~15-23s）
+      - LLM 后处理为可选插件功能
     """
+
+    def __init__(self, searcher: Optional[Searcher] = None):
+        self._searcher = searcher or Searcher()
+
+    # ── 辅助方法 ──────────────────────────────────────────────
+
+    @staticmethod
+    def _looks_like_spa(content: str) -> bool:
+        """启发式 SPA 检测：从快速提取的原始内容判断是否为 SPA 骨架页"""
+        if len(content) > 1000:
+            return False  # 长内容大概率是真实内容
+        lower = content.lower()
+        return any(indicator in lower for indicator in SPA_INDICATORS)
+
+    @staticmethod
+    def _extract_title_from_html(content: str) -> str:
+        """从 HTML/Markdown 内容中提取 <title> 标签文本"""
+        match = re.search(
+            r"<title[^>]*>(.*?)</title>", content, re.DOTALL | re.IGNORECASE
+        )
+        if match:
+            return match.group(1).strip()
+        return ""
+
+    def _normalize_fast_result(self, extract_result: Dict[str, Any]) -> Dict[str, Any]:
+        """将 extract_url 的输出格式标准化为 crawl_single 格式
+
+        映射：content → markdown, 新增 title / method 字段
+        """
+        content = extract_result.get("content", "")
+        return {
+            "success": extract_result.get("success", False),
+            "markdown": content,
+            "title": self._extract_title_from_html(content),
+            "error": extract_result.get("error"),
+            "method": "fast_extract",
+        }
+
+    def _apply_llm_postprocess(
+        self, result: Dict[str, Any], parsed_llm: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """对成功的爬取结果应用 LLM 后处理（统一 fast / browser 路径）"""
+        if not _llm_available():
+            result["llm_skipped"] = (
+                "CRAWL_MCP_API_KEY 未配置，已跳过 LLM 处理。"
+                "如需使用 LLM 后处理，请设置环境变量 CRAWL_MCP_API_KEY"
+            )
+            return result
+
+        llm_result = self._postprocess_with_llm(
+            result["markdown"],
+            parsed_llm.get("instruction", ""),
+            parsed_llm.get("schema"),
+        )
+        if llm_result.get("success"):
+            for key in ("summary", "data", "content"):
+                if key in llm_result:
+                    result[f"llm_{key}"] = llm_result[key]
+        else:
+            result["llm_error"] = llm_result.get("error", "Unknown error")
+
+        return result
 
     def _create_config(self, enhanced: bool = False) -> CrawlerRunConfig:
         """创建爬虫配置"""
@@ -254,37 +336,63 @@ class Crawler:
         url: str,
         enhanced: bool = False,
         llm_config: Optional[Dict[str, Any]] = None,
+        prefer_fast: bool = True,
+        min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
     ) -> Dict[str, Any]:
-        """爬取单个网页（两阶段架构）
+        """爬取单个网页（自动降级：快速提取 → 浏览器渲染）
 
-        阶段 1：快速爬取（始终执行）
-        阶段 2：可选 LLM 后处理（需 llm_config + CRAWL_MCP_API_KEY）
+        默认先尝试轻量级提取（~0.5s），失败或内容不足时自动切换到浏览器模式（~15-23s）。
+        如需强制使用浏览器（如已知目标为 SPA），设置 prefer_fast=False。
+
+        Args:
+            url: 要爬取的网页 URL
+            enhanced: 是否使用增强模式（适用于 SPA 网站）
+            llm_config: [实验性] LLM 后处理配置（可选）
+            prefer_fast: 是否优先尝试快速提取（默认 True，设为 False 强制用浏览器）
+            min_content_length: 快速提取结果的最小内容长度阈值（默认 200 字符）
         """
-        parsed = _parse_llm_config(llm_config)
+        parsed_llm = _parse_llm_config(llm_config)
 
-        # 第一阶段：快速爬取
-        result = run_async(self._crawl(url, enhanced))
+        # ── Phase 1: 快速提取（如果启用）────────────────────
+        if prefer_fast:
+            fast_result = self._searcher.extract_url(url)
 
-        # 第二阶段：LLM 后处理（可选插件）
-        if parsed and result["success"]:
-            if not _llm_available():
-                result["llm_skipped"] = (
-                    "CRAWL_MCP_API_KEY 未配置，已跳过 LLM 处理。"
-                    "如需使用 LLM 后处理，请设置环境变量 CRAWL_MCP_API_KEY"
-                )
+            if (
+                fast_result.get("success")
+                and len(fast_result.get("content", "")) >= min_content_length
+            ):
+                # 快速路径成功 → 标准化 + LLM 后处理
+                result = self._normalize_fast_result(fast_result)
+                if parsed_llm and result["success"]:
+                    result = self._apply_llm_postprocess(result, parsed_llm)
                 return result
 
-            llm_result = self._postprocess_with_llm(
-                result["markdown"],
-                parsed.get("instruction", ""),
-                parsed.get("schema"),
-            )
-            if llm_result.get("success"):
-                for key in ("summary", "data", "content"):
-                    if key in llm_result:
-                        result[f"llm_{key}"] = llm_result[key]
+            # 记录降级原因
+            if not fast_result.get("success"):
+                fallback_reason = (
+                    f"Fast extraction failed: {fast_result.get('error', 'unknown')}"
+                )
             else:
-                result["llm_error"] = llm_result.get("error", "Unknown error")
+                content_len = len(fast_result.get("content", ""))
+                fallback_reason = (
+                    f"Fast extraction returned insufficient content "
+                    f"({content_len} chars < {min_content_length} min)"
+                )
+
+            # SPA 自动检测：如果快速结果看起来像 SPA 骨架，自动提升到 enhanced
+            content = fast_result.get("content", "")
+            if not enhanced and self._looks_like_spa(content):
+                enhanced = True
+
+        # ── Phase 1b: 浏览器渲染降级 ─────────────────────────
+        result = run_async(self._crawl(url, enhanced))
+        if prefer_fast:
+            result["method"] = "browser_fallback"
+            result["fallback_reason"] = fallback_reason
+
+        # ── Phase 2: LLM 后处理（可选插件）────────────────────
+        if parsed_llm and result["success"]:
+            result = self._apply_llm_postprocess(result, parsed_llm)
 
         return result
 
@@ -336,48 +444,152 @@ class Crawler:
     # 公开 API — 批量爬取
     # ================================================================
 
+    @staticmethod
+    def _format_crawl4ai_result(raw) -> Dict[str, Any]:
+        """将 crawl4ai 原始结果标准化为统一字典格式"""
+        return {
+            "success": raw.success,
+            "markdown": raw.markdown.raw_markdown if raw.success else "",
+            "title": raw.metadata.get("title", "") if raw.success else "",
+            "error": raw.error_message if not raw.success else None,
+        }
+
+    async def _parallel_fast_extract(self, urls: List[str]) -> List[Dict[str, Any]]:
+        """并行快速提取多个 URL（ThreadPoolExecutor，DDGS 是同步的）"""
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor(
+            max_workers=min(len(urls), 10)
+        ) as executor:
+            futures = [executor.submit(self._searcher.extract_url, url) for url in urls]
+            return [f.result() for f in futures]
+
+    async def _browser_crawl_subset(
+        self,
+        urls: List[str],
+        enhanced_flags: List[bool],
+        concurrent: int,
+    ) -> List[Dict[str, Any]]:
+        """仅对子集 URL 执行浏览器爬取，按 enhanced 标志分组"""
+        normal_urls = [
+            (i, u) for i, (u, e) in enumerate(zip(urls, enhanced_flags)) if not e
+        ]
+        enhanced_urls = [
+            (i, u) for i, (u, e) in enumerate(zip(urls, enhanced_flags)) if e
+        ]
+
+        all_results: list = [None] * len(urls)
+
+        async def crawl_group(url_list, is_enhanced):
+            if not url_list:
+                return []
+            config = self._create_config(enhanced=is_enhanced)
+            _, group_urls = zip(*url_list)
+            dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
+            async with AsyncWebCrawler(verbose=False) as crawler:
+                raw = await crawler.arun_many(
+                    urls=list(group_urls), config=config, dispatcher=dispatcher
+                )
+            return [self._format_crawl4ai_result(r) for r in raw]
+
+        if normal_urls:
+            norm_results = await crawl_group(normal_urls, False)
+            for (orig_idx, _), r in zip(normal_urls, norm_results):
+                all_results[orig_idx] = r
+        if enhanced_urls:
+            enh_results = await crawl_group(enhanced_urls, True)
+            for (orig_idx, _), r in zip(enhanced_urls, enh_results):
+                all_results[orig_idx] = r
+
+        return all_results
+
     async def _crawl_batch(
         self,
         urls: List[str],
         concurrent: int = 3,
         llm_config: Optional[Dict[str, Any]] = None,
         llm_concurrent: int = 3,
+        prefer_fast: bool = True,
+        min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
     ) -> List[Dict[str, Any]]:
-        """批量爬取（先并行爬取，再可选 LLM 后处理）"""
+        """批量爬取（三阶段：并行快提取 → 选浏览器 → LLM 后处理）
+
+        Phase 1: 并行快速提取所有 URL（~0.5s each）
+        Phase 2: 对失败/短内容的 URL 子集执行浏览器爬取（~15-23s each）
+        Phase 3: 可选 LLM 批量后处理
+        """
         if not urls:
             return []
 
-        config = self._create_config(enhanced=False)
-        dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
+        results: List[Optional[Dict[str, Any]]] = [None] * len(urls)
 
-        async with AsyncWebCrawler(verbose=False) as crawler:
-            raw_results = await crawler.arun_many(
-                urls=urls, config=config, dispatcher=dispatcher
-            )
+        # ── Phase 1: 并行快速提取 ─────────────────────────────
+        if prefer_fast:
+            fast_results = await self._parallel_fast_extract(urls)
 
-        formatted_results = [
-            {
-                "success": r.success,
-                "markdown": r.markdown.raw_markdown if r.success else "",
-                "title": r.metadata.get("title", "") if r.success else "",
-                "error": r.error_message if not r.success else None,
-            }
-            for r in raw_results
-        ]
+            # 分离成功与需降级
+            fallback_indices: List[int] = []
+            for i, fr in enumerate(fast_results):
+                if (
+                    fr.get("success")
+                    and len(fr.get("content", "")) >= min_content_length
+                ):
+                    results[i] = self._normalize_fast_result(fr)
+                else:
+                    fallback_indices.append(i)
 
-        # 第二阶段：LLM 后处理（可选插件）
+            # 全部快速成功 → 直接进入 LLM 阶段
+            if not fallback_indices:
+                pass  # results 已填满，继续到 Phase 3
+            else:
+                # ── Phase 2: 浏览器降级子集 ───────────────────────
+                fallback_urls = [urls[i] for i in fallback_indices]
+                # SPA 检测决定是否用 enhanced
+                enhanced_flags = [
+                    (
+                        not any(e for e in (False,) if True)  # placeholder
+                        or self._looks_like_spa(fast_results[i].get("content", ""))
+                    )
+                    for i in fallback_indices
+                ]
+                browser_results = await self._browser_crawl_subset(
+                    fallback_urls, enhanced_flags, concurrent
+                )
+
+                for idx, br in zip(fallback_indices, browser_results):
+                    br["method"] = "browser_fallback"
+                    if not fast_results[idx].get("success"):
+                        br["fallback_reason"] = (
+                            f"Fast extraction failed: "
+                            f"{fast_results[idx].get('error', 'unknown')}"
+                        )
+                    else:
+                        content_len = len(fast_results[idx].get("content", ""))
+                        br["fallback_reason"] = (
+                            f"Insufficient content "
+                            f"({content_len} chars < {min_content_length})"
+                        )
+                    results[idx] = br
+        else:
+            # prefer_fast=False：全部走浏览器
+            config = self._create_config(enhanced=False)
+            dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
+            async with AsyncWebCrawler(verbose=False) as crawler:
+                raw_results = await crawler.arun_many(
+                    urls=urls, config=config, dispatcher=dispatcher
+                )
+            results = [self._format_crawl4ai_result(r) for r in raw_results]
+
+        # ── Phase 3: LLM 批量后处理（可选插件）──────────────────
         parsed = _parse_llm_config(llm_config)
         if parsed and parsed.get("instruction"):
             if not _llm_available():
-                # 无 API Key：标记跳过
-                for r in formatted_results:
-                    if r["success"]:
+                for r in results:
+                    if r and r["success"]:
                         r["llm_skipped"] = "CRAWL_MCP_API_KEY 未配置，已跳过 LLM 处理"
-                return formatted_results
+                return results  # type: ignore[return-value]
 
-            successful = [
-                (i, r) for i, r in enumerate(formatted_results) if r["success"]
-            ]
+            successful = [(i, r) for i, r in enumerate(results) if r and r["success"]]
             if successful:
                 llm_results = await self._postprocess_batch_with_llm(
                     [r for _, r in successful],
@@ -388,14 +600,14 @@ class Crawler:
                 for idx, (original_index, _) in enumerate(successful):
                     lr = llm_results[idx]
                     if lr.pop("__error__", None):
-                        formatted_results[original_index]["llm_error"] = lr.get(
+                        results[original_index]["llm_error"] = lr.get(
                             "error", "Unknown"
                         )
                     for key in ("summary", "data"):
                         if key in lr:
-                            formatted_results[original_index][f"llm_{key}"] = lr[key]
+                            results[original_index][f"llm_{key}"] = lr[key]
 
-        return formatted_results
+        return results  # type: ignore[return-value]
 
     def crawl_batch(
         self,
@@ -403,10 +615,21 @@ class Crawler:
         concurrent: int = 3,
         llm_config: Optional[Dict[str, Any]] = None,
         llm_concurrent: int = 3,
+        prefer_fast: bool = True,
+        min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
     ) -> List[Dict[str, Any]]:
-        """批量爬取多个网页（同步封装）
+        """批量爬取多个网页（自动降级版）
 
-        LLM 后处理为可选插件：需同时提供 llm_config 和配置 CRAWL_MCP_API_KEY
+        默认对每个 URL 先尝试快速提取，失败或内容不足时自动 fallback 到浏览器渲染。
+        设置 prefer_fast=False 可退化到纯浏览器模式。
+
+        Args:
+            urls: URL 列表
+            concurrent: 爬取并发数
+            llm_config: [实验性] LLM 后处理配置（可选）
+            llm_concurrent: LLM 处理并发数
+            prefer_fast: 是否优先尝试快速提取（默认 True）
+            min_content_length: 快速提取最小内容长度阈值（默认 200 字符）
         """
         return run_async(
             self._crawl_batch(
@@ -414,5 +637,7 @@ class Crawler:
                 concurrent=concurrent,
                 llm_config=llm_config,
                 llm_concurrent=llm_concurrent,
+                prefer_fast=prefer_fast,
+                min_content_length=min_content_length,
             )
         )

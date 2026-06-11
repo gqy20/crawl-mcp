@@ -3,7 +3,6 @@
 覆盖范围：
 - _search_wrapper 通用搜索方法（成功/空结果/异常）
 - search_text / search_news 委托验证
-- extract_url 轻量提取（含格式参数）
 - search_books / search_videos 新增搜索类型
 - 图片搜索（纯搜索/下载/分析/过滤，全链路）
 - 并行下载（顺序保持）
@@ -122,59 +121,7 @@ class TestSearchDelegation:
 
 
 # ============================================================
-# 2. extract_url — 轻量 URL 提取
-# ============================================================
-
-
-class TestExtractUrl:
-    """extract_url 基于 ddgs.extract()"""
-
-    @patch("crawl4ai_mcp.searcher.DDGS")
-    def test_returns_markdown_by_default(self, mock_ddgs_class):
-        """默认返回 Markdown 格式"""
-        mock_ddgs = MagicMock()
-        mock_ddgs_class.return_value = mock_ddgs
-        mock_ddgs.extract.return_value = {
-            "url": "https://example.com",
-            "content": "# Hello\n\nWorld",
-        }
-
-        result = Searcher().extract_url("https://example.com")
-
-        assert result["success"] is True
-        assert result["url"] == "https://example.com"
-        assert result["content"] == "# Hello\n\nWorld"
-        assert result["fmt"] == "text_markdown"
-
-    @patch("crawl4ai_mcp.searcher.DDGS")
-    def test_handles_error(self, mock_ddgs_class):
-        """异常时返回错误格式"""
-        mock_ddgs = MagicMock()
-        mock_ddgs_class.return_value = mock_ddgs
-        mock_ddgs.extract.side_effect = Exception("timeout")
-
-        result = Searcher().extract_url("https://slow.example.com")
-
-        assert result["success"] is False
-        assert "error" in result
-        assert result["url"] == "https://slow.example.com"
-
-    @patch("crawl4ai_mcp.searcher.DDGS")
-    def test_passes_fmt_param_to_ddgs(self, mock_ddgs_class):
-        """fmt 参数正确传递给 DDGS"""
-        mock_ddgs = MagicMock()
-        mock_ddgs_class.return_value = mock_ddgs
-        mock_ddgs.extract.return_value = {"url": "u", "content": "plain"}
-
-        Searcher().extract_url("https://example.com", fmt="text_plain")
-
-        mock_ddgs.extract.assert_called_once_with(
-            "https://example.com", fmt="text_plain"
-        )
-
-
-# ============================================================
-# 3. search_books / search_videos — 新增搜索类型
+# 2. search_books / search_videos — 新增搜索类型
 # ============================================================
 
 
@@ -382,9 +329,6 @@ class TestMCPToolRegistration:
         from crawl4ai_mcp.fastmcp_server import mcp
 
         return [t.name for t in asyncio.run(mcp.list_tools())]
-
-    def test_extract_url_registered(self):
-        assert "extract_url" in self._tool_names()
 
     def test_search_text_registered(self):
         assert "search_text" in self._tool_names()

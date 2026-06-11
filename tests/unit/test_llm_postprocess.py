@@ -124,6 +124,7 @@ class TestCrawlSingleWithPostProcess:
 
         with (
             patch.object(crawler, "_crawl", side_effect=mock_crawl_impl),
+            patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler, "_postprocess_with_llm", return_value=mock_llm_result
             ) as mock_post,

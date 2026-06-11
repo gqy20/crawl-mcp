@@ -65,7 +65,7 @@ def _llm_available() -> bool:
     """检查 LLM 功能是否可用（API Key 是否已配置）
 
     Returns:
-        True 如果 CRAWL_MCP_API_KEY（或旧 OPENAI_API_KEY）已配置
+        True 如果 CRAWL_MCP_API_KEY 已配置
     """
     return get_default_llm_config() is not None
 

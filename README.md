@@ -91,8 +91,6 @@ pip install crawl-mcp
 | `CRAWL_MCP_VISION_MODEL` | 图片分析模型名称 | 否 | `glm-4.6v` |
 
 > *不配置时爬取和搜索功能完全正常，仅 LLM 后处理和图片分析不可用。
->
-> **向后兼容**：旧变量名 (`OPENAI_API_KEY` 等) 仍可用但会发出弃用警告。
 
 ## LLM 后处理（实验性功能）
 

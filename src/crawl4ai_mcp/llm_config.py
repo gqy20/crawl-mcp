@@ -1,54 +1,15 @@
 """LLM 配置模块 - 管理 LLM API 密钥和模型配置
 
-环境变量命名规范 (v0.2.0+):
+环境变量:
     CRAWL_MCP_API_KEY:      API 密钥（可选，未配置则 LLM 功能自动禁用）
     CRAWL_MCP_BASE_URL:     API 基础 URL（可选）
     CRAWL_MCP_TEXT_MODEL:   文本模型名称（可选）
     CRAWL_MCP_VISION_MODEL: 图片分析模型名称（可选）
-
-向后兼容 (过渡期):
-    旧变量名 OPENAI_API_KEY / OPENAI_BASE_URL / LLM_MODEL / VISION_MODEL
-    仍可使用，但会发出 DeprecationWarning。将在 v0.3.0 移除。
 """
 
 import os
-import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-
-
-# ── 变量名映射表 ────────────────────────────────────────────────
-
-_ENV_MAP = {
-    "CRAWL_MCP_API_KEY": "OPENAI_API_KEY",
-    "CRAWL_MCP_BASE_URL": "OPENAI_BASE_URL",
-    "CRAWL_MCP_TEXT_MODEL": "LLM_MODEL",
-    "CRAWL_MCP_VISION_MODEL": "VISION_MODEL",
-}
-
-
-def _get_env(key: str, default: str = "") -> Optional[str]:
-    """读取环境变量，支持向后兼容 fallback
-
-    优先级：新变量 > 旧变量（+ DeprecationWarning）> default
-    """
-    value = os.getenv(key)
-    if value is not None:
-        return value
-
-    # 尝试旧变量名 fallback
-    old_key = _ENV_MAP.get(key)
-    if old_key is not None:
-        old_value = os.getenv(old_key)
-        if old_value is not None:
-            warnings.warn(
-                f"{old_key} 已弃用，请改用 {key}",
-                DeprecationWarning,
-                stacklevel=3,
-            )
-            return old_value
-
-    return default or None
 
 
 @dataclass
@@ -79,16 +40,15 @@ def get_default_llm_config() -> Optional[LLMConfig]:
     Returns:
         LLMConfig 实例，或 None（当 API Key 未配置时）
     """
-    api_key = _get_env("CRAWL_MCP_API_KEY")
+    api_key = os.getenv("CRAWL_MCP_API_KEY")
     if not api_key:
         return None
 
     return LLMConfig(
         api_key=api_key,
-        base_url=_get_env("CRAWL_MCP_BASE_URL", "https://api.openai.com/v1")
-        or "https://api.openai.com/v1",
-        model=_get_env("CRAWL_MCP_TEXT_MODEL", "glm-4.7") or "glm-4.7",
-        vision_model=_get_env("CRAWL_MCP_VISION_MODEL", "glm-4.6v") or "glm-4.6v",
+        base_url=os.getenv("CRAWL_MCP_BASE_URL") or "https://api.openai.com/v1",
+        model=os.getenv("CRAWL_MCP_TEXT_MODEL") or "glm-4.7",
+        vision_model=os.getenv("CRAWL_MCP_VISION_MODEL") or "glm-4.6v",
     )
 
 

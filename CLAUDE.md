@@ -49,7 +49,7 @@ uv run crawl-mcp
 |------|------|-------------|
 | `crawler.py` | 网页爬取核心逻辑 | `Crawler.crawl_single()`, `Crawler.crawl_batch()` |
 | `searcher.py` | 搜索功能（文本/新闻/图片） | `Searcher.search_text()`, `Searcher.search_images()` |
-| `llm_config.py` | LLM 配置管理（含 fallback 兼容） | `get_default_llm_config()`, `LLMConfig` |
+| `llm_config.py` | LLM 配置管理 | `get_default_llm_config()`, `LLMConfig` |
 | `fastmcp_server.py` | MCP 服务器入口，注册所有工具 | `@mcp.tool` 装饰器 |
 
 ### 异步处理模式
@@ -105,8 +105,6 @@ uv run crawl-mcp
 | `CRAWL_MCP_VISION_MODEL` | 图片分析模型名称 | 否 | `glm-4.6v` |
 
 > *不配置时所有爬取/搜索功能正常工作，仅 LLM 后处理和图片分析不可用。
->
-> **向后兼容**：旧变量名 (`OPENAI_API_KEY` 等) 仍可使用但会发出 `DeprecationWarning`，将在 v0.3.0 移除。
 
 ### 响应格式约定
 

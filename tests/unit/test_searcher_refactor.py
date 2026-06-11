@@ -326,7 +326,7 @@ class TestSearchImages:
 
         import os
 
-        os.environ["OPENAI_API_KEY"] = "test_key"
+        os.environ["CRAWL_MCP_API_KEY"] = "test_key"
         result = Searcher().search_images(
             "landscape", max_results=10, analyze=True, analysis_prompt="describe it"
         )

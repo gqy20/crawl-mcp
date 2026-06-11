@@ -1,8 +1,8 @@
-"""Crawler v2 升级后测试 — TDD 红阶段
+"""Crawler v2 升级后测试
 
 覆盖范围：
 - 公共工具函数 (_run_async 提取到 utils)
-- Crawler 核心爬取（两阶段架构）
+- Crawler 核心爬取（两阶段架构 + LLM 可选插件）
 - 浏览器实例复用（重试时复用）
 - 批量爬取 + LLM 后处理
 - 整站深度爬取（BFSDeepCrawlStrategy + arun）
@@ -53,12 +53,12 @@ class TestRunAsyncUtility:
 
 
 # ============================================================
-# 2. crawl_single — 两阶段架构
+# 2. crawl_single — 两阶段架构 + LLM 可选插件
 # ============================================================
 
 
 class TestCrawlSingleTwoPhase:
-    """测试单页爬取的两阶段设计：先爬取，再可选 LLM 后处理"""
+    """测试单页爬取：先爬取，再可选 LLM 后处理（需 API Key）"""
 
     @pytest.mark.asyncio
     async def test_crawl_single_returns_markdown_without_llm(self):
@@ -87,7 +87,7 @@ class TestCrawlSingleTwoPhase:
 
     @pytest.mark.asyncio
     async def test_crawl_single_with_llm_postprocess(self):
-        """传 llm_config 时执行两阶段：爬取 + LLM 后处理"""
+        """API Key 已配置时，传 llm_config 执行两阶段：爬取 + LLM 后处理"""
         from crawl4ai_mcp.crawler import Crawler
 
         crawler = Crawler()
@@ -99,6 +99,7 @@ class TestCrawlSingleTwoPhase:
 
         with (
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler,
                 "_postprocess_with_llm",
@@ -114,12 +115,47 @@ class TestCrawlSingleTwoPhase:
                 llm_config={"instruction": "Summarize this"},
             )
 
-            assert result["success"] is True
-            assert result["markdown"] == "# Article\n\nLong content..."
-            assert result["llm_summary"] == "Summary text"
-            mock_llm.assert_called_once_with(
-                "# Article\n\nLong content...", "Summarize this", None
+        assert result["success"] is True
+        assert result["markdown"] == "# Article\n\nLong content..."
+        assert result["llm_summary"] == "Summary text"
+        mock_llm.assert_called_once_with(
+            "# Article\n\nLong content...", "Summarize this", None
+        )
+
+    @pytest.mark.asyncio
+    async def test_crawl_single_llm_skipped_when_no_api_key(self):
+        """API Key 未配置时，传 llm_config 应优雅跳过 LLM 阶段"""
+        from crawl4ai_mcp.crawler import Crawler
+
+        crawler = Crawler()
+        mock_result = MagicMock(
+            success=True,
+            markdown=MagicMock(raw_markdown="# Hello\n\nWorld"),
+            metadata={"title": "Test"},
+        )
+
+        with (
+            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai_mcp.crawler._llm_available", return_value=False),
+            patch.object(crawler, "_postprocess_with_llm") as mock_llm,
+        ):
+            mock_crawler_instance = AsyncMock()
+            mock_crawler_instance.arun.return_value = mock_result
+            mock_cls.return_value.__aenter__.return_value = mock_crawler_instance
+
+            result = crawler.crawl_single(
+                "https://example.com",
+                llm_config={"instruction": "Summarize this"},
             )
+
+        # 爬取结果正常返回
+        assert result["success"] is True
+        assert result["markdown"] == "# Hello\n\nWorld"
+        # LLM 被跳过，不调用后处理方法
+        mock_llm.assert_not_called()
+        # 返回跳过提示
+        assert "llm_skipped" in result
+        assert "CRAWL_MCP_API_KEY" in result["llm_skipped"]
 
     @pytest.mark.asyncio
     async def test_crawl_single_llm_error_recorded(self):
@@ -135,6 +171,7 @@ class TestCrawlSingleTwoPhase:
 
         with (
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler,
                 "_postprocess_with_llm",
@@ -294,7 +331,7 @@ class TestCrawlBatchV2:
 
     @pytest.mark.asyncio
     async def test_batch_with_llm_postprocess(self):
-        """带 LLM 配置的批量爬取应对成功结果做并行 LLM 后处理"""
+        """API Key 已配置时，带 LLM 配置的批量爬取应对成功结果做并行 LLM 后处理"""
         from crawl4ai_mcp.crawler import Crawler
 
         crawler = Crawler()
@@ -311,6 +348,7 @@ class TestCrawlBatchV2:
 
         with (
             patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler,
                 "_postprocess_batch_with_llm",
@@ -334,10 +372,54 @@ class TestCrawlBatchV2:
                 llm_concurrent=2,
             )
 
-            assert len(results) == 2
-            assert results[0]["llm_summary"] == "S0"
-            assert results[1]["llm_summary"] == "S1"
-            mock_llm.assert_called_once()
+        assert len(results) == 2
+        assert results[0]["llm_summary"] == "S0"
+        assert results[1]["llm_summary"] == "S1"
+        mock_llm.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_batch_llm_skipped_when_no_api_key(self):
+        """API Key 未配置时，批量爬取应优雅跳过 LLM 阶段"""
+        from crawl4ai_mcp.crawler import Crawler
+
+        crawler = Crawler()
+        urls = ["https://a.com", "https://b.com"]
+
+        mock_results = [
+            MagicMock(
+                success=True,
+                markdown=MagicMock(raw_markdown=f"Data {i}"),
+                metadata={"title": f"P{i}"},
+            )
+            for i in range(2)
+        ]
+
+        with (
+            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai_mcp.crawler._llm_available", return_value=False),
+            patch.object(crawler, "_postprocess_batch_with_llm") as mock_llm,
+        ):
+            mock_instance = AsyncMock()
+            mock_instance.arun_many.return_value = mock_results
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_instance
+            mock_cm.__aexit__ = AsyncMock()
+            mock_cls.return_value = mock_cm
+
+            results = await crawler._crawl_batch(
+                urls,
+                concurrent=2,
+                llm_config={"instruction": "Summarize"},
+                llm_concurrent=2,
+            )
+
+        # 爬取结果正常
+        assert len(results) == 2
+        assert all(r["success"] for r in results)
+        # LLM 被跳过
+        mock_llm.assert_not_called()
+        # 每个结果都有 skip 提示
+        assert all("llm_skipped" in r for r in results)
 
 
 # ============================================================

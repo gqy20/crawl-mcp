@@ -2,7 +2,7 @@
 
 两阶段设计：
   阶段 1：快速爬取（始终执行，返回原始 Markdown）
-  阶段 2：可选 LLM 后处理（仅当提供 llm_config 时执行）
+  阶段 2：可选 LLM 后处理（仅当提供 llm_config 且 CRAWL_MCP_API_KEY 已配置时执行）
 """
 
 import asyncio
@@ -46,9 +46,14 @@ def _parse_llm_config(llm_config: Optional[Dict[str, Any]]) -> Optional[Dict[str
 
 
 def _build_llm_config():
-    """创建 crawl4ai LLMConfig（从环境变量读取）"""
+    """创建 crawl4ai LLMConfig（从环境变量读取）
 
+    Returns:
+        crawl4ai LLMConfig 对象，或 None（当 API Key 未配置时）
+    """
     cfg = get_default_llm_config()
+    if cfg is None:
+        return None
     return create_llm_config(
         provider=f"openai/{cfg.model}",
         api_token=cfg.api_key,
@@ -56,8 +61,22 @@ def _build_llm_config():
     )
 
 
+def _llm_available() -> bool:
+    """检查 LLM 功能是否可用（API Key 是否已配置）
+
+    Returns:
+        True 如果 CRAWL_MCP_API_KEY（或旧 OPENAI_API_KEY）已配置
+    """
+    return get_default_llm_config() is not None
+
+
 class Crawler:
-    """统一的爬虫类，整合单页、整站、批量爬取功能"""
+    """统一的爬虫类，整合单页、整站、批量爬取功能
+
+    LLM 后处理为可选插件功能：
+      - 不配置 CRAWL_MCP_API_KEY → 纯爬取工具，传 llm_config 会优雅跳过
+      - 配置 CRAWL_MCP_API_KEY → 可使用两阶段处理（爬取 + LLM 摘要/提取）
+    """
 
     def _create_config(self, enhanced: bool = False) -> CrawlerRunConfig:
         """创建爬虫配置"""
@@ -117,12 +136,25 @@ class Crawler:
     def _postprocess_with_llm(
         self, markdown: str, instruction: str, schema=None
     ) -> Dict:
-        """使用原生 LLMExtractionStrategy 做后处理"""
+        """使用原生 LLMExtractionStrategy 做后处理
+
+        .. deprecated::
+            此方法保留供 Python SDK 高级用户使用。
+            MCP 工具层已将 LLM 降级为可选插件，未配置 API Key 时自动跳过。
+        """
         if not instruction or not instruction.strip():
             return {"success": True, "original_markdown": markdown, "skipped": True}
 
+        llm_cfg = _build_llm_config()
+        if llm_cfg is None:
+            return {
+                "success": False,
+                "error": "CRAWL_MCP_API_KEY 未配置",
+                "content": markdown,
+            }
+
         kw = dict(
-            llm_config=_build_llm_config(),
+            llm_config=llm_cfg,
             instruction=instruction,
             extraction_type="schema" if schema else "block",
         )
@@ -160,13 +192,21 @@ class Crawler:
     async def _postprocess_batch_with_llm(
         self, items: List[Dict], instruction: str, schema=None, max_concurrent=3
     ) -> List[Dict]:
-        """使用原生 LLMExtractionStrategy 并行做批量后处理"""
+        """使用原生 LLMExtractionStrategy 并行做批量后处理
+
+        .. deprecated::
+            此方法保留供 Python SDK 高级用户使用。
+            MCP 工具层已将 LLM 降级为可选插件。
+        """
         if not items:
             return []
 
         import concurrent.futures
 
         llm_cfg = _build_llm_config()
+        if llm_cfg is None:
+            return [{"__index__": i, "__error__": True} for i in range(len(items))]
+
         extraction_type = "schema" if schema else "block"
         kw = dict(
             llm_config=llm_cfg, instruction=instruction, extraction_type=extraction_type
@@ -215,14 +255,25 @@ class Crawler:
         enhanced: bool = False,
         llm_config: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """爬取单个网页（两阶段架构）"""
+        """爬取单个网页（两阶段架构）
+
+        阶段 1：快速爬取（始终执行）
+        阶段 2：可选 LLM 后处理（需 llm_config + CRAWL_MCP_API_KEY）
+        """
         parsed = _parse_llm_config(llm_config)
 
         # 第一阶段：快速爬取
         result = run_async(self._crawl(url, enhanced))
 
-        # 第二阶段：LLM 后处理
+        # 第二阶段：LLM 后处理（可选插件）
         if parsed and result["success"]:
+            if not _llm_available():
+                result["llm_skipped"] = (
+                    "CRAWL_MCP_API_KEY 未配置，已跳过 LLM 处理。"
+                    "如需使用 LLM 后处理，请设置环境变量 CRAWL_MCP_API_KEY"
+                )
+                return result
+
             llm_result = self._postprocess_with_llm(
                 result["markdown"],
                 parsed.get("instruction", ""),
@@ -314,9 +365,16 @@ class Crawler:
             for r in raw_results
         ]
 
-        # 第二阶段：LLM 后处理
+        # 第二阶段：LLM 后处理（可选插件）
         parsed = _parse_llm_config(llm_config)
         if parsed and parsed.get("instruction"):
+            if not _llm_available():
+                # 无 API Key：标记跳过
+                for r in formatted_results:
+                    if r["success"]:
+                        r["llm_skipped"] = "CRAWL_MCP_API_KEY 未配置，已跳过 LLM 处理"
+                return formatted_results
+
             successful = [
                 (i, r) for i, r in enumerate(formatted_results) if r["success"]
             ]
@@ -346,7 +404,10 @@ class Crawler:
         llm_config: Optional[Dict[str, Any]] = None,
         llm_concurrent: int = 3,
     ) -> List[Dict[str, Any]]:
-        """批量爬取多个网页（同步封装）"""
+        """批量爬取多个网页（同步封装）
+
+        LLM 后处理为可选插件：需同时提供 llm_config 和配置 CRAWL_MCP_API_KEY
+        """
         return run_async(
             self._crawl_batch(
                 urls,

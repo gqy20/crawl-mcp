@@ -199,7 +199,7 @@ class TestTimeoutMiddlewareIntegration:
 
         assert timeout_mw is not None
         assert timeout_mw.per_tool.get("extract_url") == 15
-        assert timeout_mw.per_tool.get("crawl_single") == 120
+        assert timeout_mw.per_tool.get("crawl_single") == 60
 
     def test_server_default_timeout_is_60s(self):
         """服务器默认超时为 60 秒"""

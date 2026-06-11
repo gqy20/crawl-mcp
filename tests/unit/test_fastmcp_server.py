@@ -3,7 +3,6 @@
 import asyncio
 import inspect
 
-import pytest
 from unittest.mock import patch
 from crawl4ai_mcp.fastmcp_server import mcp
 
@@ -68,8 +67,11 @@ class TestCrawlToolSchemas:
     def test_crawl_site_has_depth_pages_concurrent(self):
         tool = _get_tool("crawl_site")
         sig = inspect.signature(tool.fn)
-        for param in ("url", "depth", "pages", "concurrent", "llm_config"):
+        # crawl_site 已移除 llm_config 参数（整站爬取不支持 LLM 后处理）
+        for param in ("url", "depth", "pages", "concurrent"):
             assert param in sig.parameters
+        # 确认 llm_config 不在签名中
+        assert "llm_config" not in sig.parameters
 
     def test_crawl_batch_has_urls_concurrent_llm(self):
         tool = _get_tool("crawl_batch")
@@ -103,37 +105,34 @@ class TestSearchToolSchemas:
 class TestCrawlToolFunctions:
     """爬取工具函数行为验证"""
 
-    @pytest.mark.asyncio
-    async def test_crawl_single_returns_result(self):
+    def test_crawl_single_returns_result(self):
         from crawl4ai_mcp.fastmcp_server import _crawler
 
-        async def mock(url, enhanced, llm_config=None):
+        def mock(url, enhanced, llm_config=None):
             return {"success": True, "markdown": "# T", "title": "T"}
 
         with patch.object(_crawler, "crawl_single", side_effect=mock):
-            result = await _get_tool("crawl_single").fn("https://example.com")
+            result = _get_tool("crawl_single").fn("https://example.com")
         assert result["success"] is True
 
-    @pytest.mark.asyncio
-    async def test_crawl_site_returns_stats(self):
+    def test_crawl_site_returns_stats(self):
         from crawl4ai_mcp.fastmcp_server import _crawler
 
-        async def mock(url, depth, pages, concurrent):
+        def mock(url, depth=2, pages=10, concurrent=3):
             return {"successful_pages": 3, "total_pages": 5, "success_rate": "60%"}
 
         with patch.object(_crawler, "crawl_site", side_effect=mock):
-            result = await _get_tool("crawl_site").fn("https://example.com")
+            result = _get_tool("crawl_site").fn("https://example.com")
         assert result["successful_pages"] == 3
 
-    @pytest.mark.asyncio
-    async def test_crawl_batch_returns_list(self):
+    def test_crawl_batch_returns_list(self):
         from crawl4ai_mcp.fastmcp_server import _crawler
 
-        async def mock(urls, concurrent, llm_config=None, llm_concurrent=3):
+        def mock(urls, concurrent=3, llm_config=None, llm_concurrent=3):
             return [{"success": True, "markdown": "# A"}]
 
         with patch.object(_crawler, "crawl_batch", side_effect=mock):
-            result = await _get_tool("crawl_batch").fn(["https://a.com"])
+            result = _get_tool("crawl_batch").fn(["https://a.com"])
         assert len(result) == 1
 
 

@@ -28,9 +28,9 @@ mcp.add_middleware(
             "search_books": 20,
             "search_videos": 20,
             "search_images": 30,
-            "crawl_single": 120,
-            "crawl_batch": 300,
-            "crawl_site": 300,
+            "crawl_single": 60,
+            "crawl_batch": 120,
+            "crawl_site": 120,
         },
     )
 )
@@ -68,7 +68,7 @@ def extract_url(
     return _searcher.extract_url(url, fmt)
 
 
-@mcp.tool(timeout=120, tags={"crawl"})
+@mcp.tool(timeout=60, tags={"crawl"})
 def crawl_single(
     url: str,
     enhanced: bool = False,
@@ -80,24 +80,25 @@ def crawl_single(
     Args:
         url: 要爬取的网页 URL
         enhanced: 是否使用增强模式（适用于 SPA 网站，等待时间更长）
-        llm_config: LLM 配置（可选），支持三种格式:
+        llm_config: [实验性] LLM 后处理配置（可选），需设置 CRAWL_MCP_API_KEY 才生效。
+            支持三种格式:
             - 字典: {"instruction": "总结", "schema": {...}}
             - JSON 字符串: '{"instruction": "总结"}'
             - 纯文本: "总结页面内容"（自动作为 instruction）
+            未设置 API Key 时传此参数会优雅跳过，结果中包含 llm_skipped 提示。
 
     Returns:
-        包含 success, markdown, title, error, (可选) llm_result 的字典
+        包含 success, markdown, title, error, (可选) llm_summary/llm_data/llm_skipped 的字典
     """
     return _crawler.crawl_single(url, enhanced, llm_config)
 
 
-@mcp.tool(timeout=300, tags={"crawl"})
+@mcp.tool(timeout=120, tags={"crawl"})
 def crawl_site(
     url: str,
     depth: int = 2,
     pages: int = 10,
     concurrent: int = 3,
-    llm_config: Optional[Union[Dict[str, Any], str]] = None,
     ctx: Context | None = None,
 ) -> Dict[str, Any]:
     """
@@ -108,14 +109,13 @@ def crawl_site(
         depth: 最大爬取深度（默认：2）
         pages: 最大页面数（默认：10）
         concurrent: 并发请求数（默认：3）
-        llm_config: LLM 配置（可选），格式同 crawl_single
 
     Returns:
         包含 successful_pages, total_pages, success_rate, results 的字典
     """
     if ctx:
         ctx.info(f"开始爬取站点: {url} (深度={depth}, 最大页面={pages})")
-    result = _crawler.crawl_site(url, depth, pages, concurrent)
+    result = _crawler.crawl_site(url, depth=depth, pages=pages, concurrent=concurrent)
     if ctx:
         ctx.info(
             f"站点爬取完成: {result.get('successful_pages', 0)}/{result.get('total_pages', 0)} 页成功"
@@ -123,7 +123,7 @@ def crawl_site(
     return result
 
 
-@mcp.tool(timeout=300, tags={"crawl"})
+@mcp.tool(timeout=120, tags={"crawl"})
 def crawl_batch(
     urls: List[str],
     concurrent: int = 3,
@@ -137,7 +137,7 @@ def crawl_batch(
     Args:
         urls: URL 列表
         concurrent: 网页爬取并发数（默认：3）
-        llm_config: LLM 配置（可选），格式同 crawl_single
+        llm_config: [实验性] LLM 后处理配置（可选），需设置 CRAWL_MCP_API_KEY 才生效
         llm_concurrent: LLM 处理并发数（默认：3）
 
     Returns:

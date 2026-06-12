@@ -52,7 +52,17 @@ pip install crawl-mcp
 
 ## MCP 配置
 
-### 基础配置（纯爬取，无需 API Key）
+### 基础配置（推荐，无需 API Key）
+
+默认配置不需要任何 API Key。以下工具都可以直接使用：
+
+- `crawl_single` / `crawl_batch` / `crawl_site`
+- `search_text` / `search_news` / `search_books` / `search_videos` / `search_images`
+
+只有两类可选能力需要 API Key：
+
+- 传入 `llm_config` 做 LLM 后处理
+- 调用 `search_images` 且设置 `analyze=true` 做图片分析
 
 ```json
 {
@@ -65,7 +75,9 @@ pip install crawl-mcp
 }
 ```
 
-### 完整配置（含 LLM / 图片分析）
+### 可选 AI 配置（仅在需要 LLM / 图片分析时）
+
+如果需要 `llm_config` 后处理或图片分析，再增加 `env`：
 
 ```json
 {
@@ -88,12 +100,12 @@ pip install crawl-mcp
 
 | 变量 | 说明 | 必需 | 默认值 |
 |------|------|------|--------|
-| `CRAWL_MCP_API_KEY` | API 密钥 | 否* | - |
-| `CRAWL_MCP_BASE_URL` | API 基础 URL | 否 | `https://api.openai.com/v1` |
-| `CRAWL_MCP_TEXT_MODEL` | 文本模型名称 | 否 | `glm-4.7` |
+| `CRAWL_MCP_API_KEY` | LLM 后处理 / 图片分析使用的 API 密钥 | 否 | - |
+| `CRAWL_MCP_BASE_URL` | OpenAI 兼容 API 基础 URL | 否 | `https://api.openai.com/v1` |
+| `CRAWL_MCP_TEXT_MODEL` | LLM 后处理模型名称 | 否 | `glm-4.7` |
 | `CRAWL_MCP_VISION_MODEL` | 图片分析模型名称 | 否 | `glm-4.6v` |
 
-> *不配置时爬取和搜索功能完全正常，仅 LLM 后处理和图片分析不可用。
+不配置 `CRAWL_MCP_API_KEY` 时，所有爬取和搜索工具仍可正常使用。传入 `llm_config` 时会跳过 LLM 后处理并返回 `llm_skipped`；`search_images(analyze=true)` 会返回图片分析配置错误，但普通图片搜索和下载不受影响。
 
 ## LLM 后处理（实验性功能）
 
@@ -266,6 +278,26 @@ pip install crawl-mcp
 uv sync
 uv run pytest
 uv run python -m crawl4ai_mcp.fastmcp_server --http
+```
+
+## 发布
+
+当前准备发布版本：`0.2.0`
+
+发布前检查：
+
+```bash
+uv run pytest tests/unit
+uv run ruff check .
+uv run ruff format --check .
+uv build
+```
+
+创建并推送 tag 后会触发 GitHub Actions 发布到 PyPI：
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 ## 许可证

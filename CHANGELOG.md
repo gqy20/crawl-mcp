@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-12
+
+### Added
+- `crawl_single` / `crawl_batch` 统一自动降级策略：
+  - 默认先使用内部 `ddgs.extract()` 快速提取静态页面
+  - 快速提取失败、内容不足或检测到 SPA 骨架页时自动 fallback 到浏览器渲染
+  - 返回 `method="fast_extract"` / `method="browser_fallback"` 标记实际路径
+  - fallback 项返回 `fallback_reason`，便于模型和调用方理解降级原因
+- `crawl_batch` 批量智能分流：
+  - 并行快速提取所有 URL
+  - 只对失败/短内容/SPA 骨架页执行浏览器 fallback
+  - 支持按 URL 子集区分普通浏览器模式和 enhanced 模式
+- MCP 工具描述质量测试，锁定工具选择边界、参数语义和返回字段说明，避免模型可见描述退化。
+
+### Changed
+- **MCP 工具集调整为 8 个公开工具**：
+  - 保留：`crawl_single`、`crawl_batch`、`crawl_site`
+  - 保留：`search_text`、`search_news`、`search_books`、`search_videos`、`search_images`
+  - `extract_url` 不再作为独立 MCP 工具暴露，改为 `crawl_single` / `crawl_batch` 的内部快速路径
+- `crawl_single` 成为推荐的单页爬取入口，静态页走快速路径，动态页自动 fallback 到浏览器。
+- `crawl_batch` 成为多个已知 URL 的批量爬取入口，避免调用方手动区分静态页和动态页。
+- `crawl_site` 明确为站点入口递归爬取工具：
+  - 使用浏览器 + BFS 深度策略
+  - 不走快速提取路径
+  - 不支持 LLM 后处理
+- 工具超时重新校准：
+  - `crawl_single`: 75s
+  - `crawl_batch`: 180s
+  - `crawl_site`: 120s
+  - `search_text`: 30s
+  - `search_news` / `search_books` / `search_videos`: 20s
+  - `search_images`: 30s
+- `llm_config` 降级为实验性可选插件能力。未配置 `CRAWL_MCP_API_KEY` 时不阻断爬取，返回 `llm_skipped`。
+- 环境变量统一为 `CRAWL_MCP_*`：
+  - `CRAWL_MCP_API_KEY`
+  - `CRAWL_MCP_BASE_URL`
+  - `CRAWL_MCP_TEXT_MODEL`
+  - `CRAWL_MCP_VISION_MODEL`
+- FastMCP 最低版本升级：`fastmcp>=3.2.4` → `fastmcp>=3.4.2`
+  - 包含 Starlette 安全下限修复（FastMCP 3.4.1）
+  - 包含 JWT 私有 header 兼容修复（FastMCP 3.4.2）
+- MCP 工具 docstring 全面重写，明确：
+  - `crawl_single` / `crawl_batch` / `crawl_site` 的选择规则
+  - `prefer_fast=False` 和 `enhanced=True` 的组合语义
+  - 搜索工具只返回摘要和链接，不抓取页面正文
+  - 条件字段 `method` / `fallback_reason` / `llm_*` 何时出现
+
+### Fixed
+- `crawl_site` 的 `concurrent` 参数现在实际传入 `SemaphoreDispatcher`，不再只是签名参数。
+- `search_text` / `search_news` / `search_books` / `search_videos` / `search_images` 正确透传 `region`、`safesearch`、`timelimit`、`max_results` 等过滤参数。
+- 批量 fallback enhanced 判定移除历史 placeholder，仅 SPA 骨架页启用 enhanced 浏览器配置。
+- 修复测试中直接写入 `os.environ` 的环境变量泄漏风险。
+- 修复同步 wrapper 测试中 coroutine 未关闭导致的 `RuntimeWarning`。
+
+### Refactor
+- 抽出 `_FastExtractDecision` 和 `_decide_fast_extract_next_step()`，统一单页/批量快速提取后的 fallback 决策。
+- `_browser_crawl_subset()` 增加 URL 列表和 enhanced 标志长度校验，避免静默错位。
+- `Searcher` 收敛 DDGS 搜索参数构造，减少搜索工具之间的重复参数组装。
+- 清理 fallback 兼容层和临时集成测试，降低维护噪声。
+
+### Docs
+- README 工具用法重排，补齐 `crawl_batch` / `crawl_site` 示例和参数说明。
+- CLAUDE.md 更新架构说明、工具选择规则、响应格式约定和发布流程。
+- 标注 `extract_url` 为内部快速提取实现，不再作为公开 MCP 工具描述。
+
 ## [0.1.5] - 2026-05-11
 
 ### Added

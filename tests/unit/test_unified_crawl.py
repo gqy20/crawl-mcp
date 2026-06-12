@@ -130,7 +130,48 @@ class TestNormalizeFastResult:
 
 
 # ============================================================
-# 4. 统一 crawl_single — 自动降级核心逻辑
+# 4. 快速提取决策
+# ============================================================
+
+
+class TestFastExtractDecision:
+    """快速提取结果 → fallback 决策"""
+
+    def test_sufficient_content_does_not_fallback(self):
+        crawler = Crawler()
+
+        decision = crawler._decide_fast_extract_next_step(
+            {"success": True, "content": "content " * 40}, 200
+        )
+
+        assert decision.should_fallback is False
+        assert decision.fallback_reason is None
+        assert decision.should_enhance is False
+
+    def test_short_content_fallbacks_without_enhanced(self):
+        crawler = Crawler()
+
+        decision = crawler._decide_fast_extract_next_step(
+            {"success": True, "content": "Too short"}, 200
+        )
+
+        assert decision.should_fallback is True
+        assert "insufficient content" in decision.fallback_reason
+        assert decision.should_enhance is False
+
+    def test_spa_skeleton_fallbacks_with_enhanced(self):
+        crawler = Crawler()
+
+        decision = crawler._decide_fast_extract_next_step(
+            {"success": True, "content": '<div id="app"></div>'}, 200
+        )
+
+        assert decision.should_fallback is True
+        assert decision.should_enhance is True
+
+
+# ============================================================
+# 5. 统一 crawl_single — 自动降级核心逻辑
 # ============================================================
 
 
@@ -415,6 +456,46 @@ class TestUnifiedCrawlBatch:
 
         assert results[0]["method"] == "fast_extract"
         assert results[1]["method"] == "browser_fallback"
+
+    @pytest.mark.asyncio
+    async def test_batch_fallback_only_enhances_spa_skeletons(self):
+        """批量 fallback 时仅 SPA 骨架页使用 enhanced 配置"""
+        crawler = Crawler()
+
+        urls = ["https://short.com", "https://spa.com"]
+        fast_results = [
+            {"success": True, "content": "Too short"},
+            {"success": True, "content": '<div id="app"></div>'},
+        ]
+
+        with (
+            patch.object(crawler._searcher, "extract_url", side_effect=fast_results),
+            patch.object(
+                crawler, "_browser_crawl_subset", new_callable=AsyncMock
+            ) as mock_browser,
+        ):
+            mock_browser.return_value = [
+                {"success": True, "markdown": "# Short", "title": "Short"},
+                {"success": True, "markdown": "# SPA", "title": "SPA"},
+            ]
+
+            results = crawler.crawl_batch(urls)
+
+        mock_browser.assert_awaited_once_with(urls, [False, True], 3)
+        assert [r["method"] for r in results] == [
+            "browser_fallback",
+            "browser_fallback",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_browser_crawl_subset_rejects_mismatched_flags(self):
+        """浏览器子集爬取要求 URL 与 enhanced 标志一一对应"""
+        crawler = Crawler()
+
+        with pytest.raises(ValueError, match="same length"):
+            await crawler._browser_crawl_subset(
+                ["https://a.com", "https://b.com"], [False], 3
+            )
 
     @pytest.mark.asyncio
     async def test_batch_empty_urls(self):

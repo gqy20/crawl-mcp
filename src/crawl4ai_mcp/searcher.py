@@ -18,6 +18,26 @@ from .utils import run_async
 class Searcher:
     """搜索类 - 提供网页搜索功能"""
 
+    @staticmethod
+    def _filtered_search_params(
+        region: str,
+        safesearch: str,
+        timelimit: Optional[str],
+        max_results: int,
+    ) -> Dict[str, Any]:
+        """构造 DDGS 通用过滤参数。"""
+        return {
+            "region": region,
+            "safesearch": safesearch,
+            "timelimit": timelimit,
+            "max_results": max_results,
+        }
+
+    @staticmethod
+    def _regional_search_params(region: str, max_results: int) -> Dict[str, Any]:
+        """构造只支持区域和数量限制的 DDGS 参数。"""
+        return {"region": region, "max_results": max_results}
+
     def _search_wrapper(
         self, search_fn: Callable, query: str, **kwargs
     ) -> Dict[str, Any]:
@@ -49,7 +69,9 @@ class Searcher:
     ) -> Dict[str, Any]:
         """文本搜索"""
         return self._search_wrapper(
-            lambda ddgs, **kw: ddgs.text(**kw), query, max_results=max_results
+            lambda ddgs, **kw: ddgs.text(**kw),
+            query,
+            **self._filtered_search_params(region, safesearch, timelimit, max_results),
         )
 
     def search_news(
@@ -62,7 +84,9 @@ class Searcher:
     ) -> Dict[str, Any]:
         """新闻搜索"""
         return self._search_wrapper(
-            lambda ddgs, **kw: ddgs.news(**kw), query, max_results=max_results
+            lambda ddgs, **kw: ddgs.news(**kw),
+            query,
+            **self._filtered_search_params(region, safesearch, timelimit, max_results),
         )
 
     def extract_url(self, url: str, fmt: str = "text_markdown") -> Dict[str, Any]:
@@ -98,7 +122,9 @@ class Searcher:
     ) -> Dict[str, Any]:
         """图书搜索"""
         return self._search_wrapper(
-            lambda ddgs, **kw: ddgs.books(**kw), query, max_results=max_results
+            lambda ddgs, **kw: ddgs.books(**kw),
+            query,
+            **self._regional_search_params(region, max_results),
         )
 
     def search_videos(
@@ -111,7 +137,9 @@ class Searcher:
     ) -> Dict[str, Any]:
         """视频搜索"""
         return self._search_wrapper(
-            lambda ddgs, **kw: ddgs.videos(**kw), query, max_results=max_results
+            lambda ddgs, **kw: ddgs.videos(**kw),
+            query,
+            **self._filtered_search_params(region, safesearch, timelimit, max_results),
         )
 
     def search_images(
@@ -133,19 +161,20 @@ class Searcher:
         analyze_concurrent: int = 3,
     ) -> Dict[str, Any]:
         """图片搜索 + 下载 + 分析（一站式）"""
+        search_params = self._filtered_search_params(
+            region, safesearch, timelimit, max_results
+        )
+        search_params.update(
+            {
+                "size": size,
+                "color": color,
+                "type_image": type_image,
+                "layout": layout,
+            }
+        )
+
         try:
-            images = list(
-                DDGS().images(
-                    query=query,
-                    region=region,
-                    safesearch=safesearch,
-                    max_results=max_results,
-                    size=size,
-                    color=color,
-                    type_image=type_image,
-                    layout=layout,
-                )
-            )
+            images = list(DDGS().images(query=query, **search_params))
         except Exception as e:
             return {
                 "success": False,

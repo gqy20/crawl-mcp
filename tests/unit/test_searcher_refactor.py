@@ -153,6 +153,90 @@ class TestSearchBooksVideos:
         assert result["success"] is True
         assert result["results"][0]["title"] == "Python Tutorial"
 
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_text_passes_filter_params(self, mock_ddgs_class):
+        """search_text 透传 region/safesearch/timelimit/max_results"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.return_value = iter([])
+
+        Searcher().search_text(
+            "python",
+            region="us-en",
+            safesearch="off",
+            timelimit="w",
+            max_results=7,
+        )
+
+        assert mock_ddgs.text.call_args[1] == {
+            "query": "python",
+            "region": "us-en",
+            "safesearch": "off",
+            "timelimit": "w",
+            "max_results": 7,
+        }
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_news_passes_filter_params(self, mock_ddgs_class):
+        """search_news 透传 region/safesearch/timelimit/max_results"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.news.return_value = iter([])
+
+        Searcher().search_news(
+            "ai",
+            region="cn-zh",
+            safesearch="moderate",
+            timelimit="d",
+            max_results=3,
+        )
+
+        assert mock_ddgs.news.call_args[1] == {
+            "query": "ai",
+            "region": "cn-zh",
+            "safesearch": "moderate",
+            "timelimit": "d",
+            "max_results": 3,
+        }
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_books_passes_region_and_max_results(self, mock_ddgs_class):
+        """search_books 透传 region/max_results"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.books.return_value = iter([])
+
+        Searcher().search_books("python", region="uk-en", max_results=4)
+
+        assert mock_ddgs.books.call_args[1] == {
+            "query": "python",
+            "region": "uk-en",
+            "max_results": 4,
+        }
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_search_videos_passes_filter_params(self, mock_ddgs_class):
+        """search_videos 透传 region/safesearch/timelimit/max_results"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.videos.return_value = iter([])
+
+        Searcher().search_videos(
+            "tutorial",
+            region="jp-jp",
+            safesearch="on",
+            timelimit="w",
+            max_results=6,
+        )
+
+        assert mock_ddgs.videos.call_args[1] == {
+            "query": "tutorial",
+            "region": "jp-jp",
+            "safesearch": "on",
+            "timelimit": "w",
+            "max_results": 6,
+        }
+
 
 # ============================================================
 # 4. search_images — 全链路（搜索/下载/分析/过滤）
@@ -219,10 +303,23 @@ class TestSearchImages:
         mock_ddgs.images.return_value = iter([{"title": "R"}])
 
         Searcher().search_images(
-            "flower", size="Large", color="Red", type_image="photo", layout="Square"
+            "flower",
+            region="us-en",
+            safesearch="off",
+            timelimit="m",
+            max_results=8,
+            size="Large",
+            color="Red",
+            type_image="photo",
+            layout="Square",
         )
 
         kw = mock_ddgs.images.call_args[1]
+        assert kw["query"] == "flower"
+        assert kw["region"] == "us-en"
+        assert kw["safesearch"] == "off"
+        assert kw["timelimit"] == "m"
+        assert kw["max_results"] == 8
         assert kw["size"] == "Large"
         assert kw["color"] == "Red"
         assert kw["type_image"] == "photo"
@@ -256,7 +353,7 @@ class TestSearchImages:
     @patch("crawl4ai_mcp.searcher.requests.get")
     @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
     def test_analyze_without_download_uses_url(
-        self, mock_openai, mock_get, mock_ddgs_class
+        self, mock_openai, mock_get, mock_ddgs_class, monkeypatch
     ):
         """不下载时分析使用原始 URL"""
         mock_ddgs = MagicMock()
@@ -271,9 +368,7 @@ class TestSearchImages:
             choices=[MagicMock(message=MagicMock(content="beautiful landscape"))]
         )
 
-        import os
-
-        os.environ["CRAWL_MCP_API_KEY"] = "test_key"
+        monkeypatch.setenv("CRAWL_MCP_API_KEY", "test_key")
         result = Searcher().search_images(
             "landscape", max_results=10, analyze=True, analysis_prompt="describe it"
         )

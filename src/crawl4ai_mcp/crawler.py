@@ -11,6 +11,7 @@ crawl_single / crawl_batch 自动降级：先尝试阶段 0，失败或内容不
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from typing import List, Dict, Any, Optional
 
 from crawl4ai import (
@@ -89,6 +90,15 @@ def _llm_available() -> bool:
     return get_default_llm_config() is not None
 
 
+@dataclass(frozen=True)
+class _FastExtractDecision:
+    """快速提取后的下一步动作。"""
+
+    should_fallback: bool
+    fallback_reason: Optional[str] = None
+    should_enhance: bool = False
+
+
 class Crawler:
     """统一的爬虫类，整合单页、整站、批量爬取功能
 
@@ -134,6 +144,29 @@ class Crawler:
             "error": extract_result.get("error"),
             "method": "fast_extract",
         }
+
+    def _decide_fast_extract_next_step(
+        self, extract_result: Dict[str, Any], min_content_length: int
+    ) -> _FastExtractDecision:
+        """判断快速提取结果是否需要浏览器降级，以及是否启用 enhanced。"""
+        content = extract_result.get("content", "")
+        if extract_result.get("success") and len(content) >= min_content_length:
+            return _FastExtractDecision(should_fallback=False)
+
+        if not extract_result.get("success"):
+            reason = f"Fast extraction failed: {extract_result.get('error', 'unknown')}"
+        else:
+            content_len = len(content)
+            reason = (
+                f"Fast extraction returned insufficient content "
+                f"({content_len} chars < {min_content_length} min)"
+            )
+
+        return _FastExtractDecision(
+            should_fallback=True,
+            fallback_reason=reason,
+            should_enhance=self._looks_like_spa(content),
+        )
 
     def _apply_llm_postprocess(
         self, result: Dict[str, Any], parsed_llm: Dict[str, Any]
@@ -356,33 +389,21 @@ class Crawler:
         # ── Phase 1: 快速提取（如果启用）────────────────────
         if prefer_fast:
             fast_result = self._searcher.extract_url(url)
+            decision = self._decide_fast_extract_next_step(
+                fast_result, min_content_length
+            )
 
-            if (
-                fast_result.get("success")
-                and len(fast_result.get("content", "")) >= min_content_length
-            ):
+            if not decision.should_fallback:
                 # 快速路径成功 → 标准化 + LLM 后处理
                 result = self._normalize_fast_result(fast_result)
                 if parsed_llm and result["success"]:
                     result = self._apply_llm_postprocess(result, parsed_llm)
                 return result
 
-            # 记录降级原因
-            if not fast_result.get("success"):
-                fallback_reason = (
-                    f"Fast extraction failed: {fast_result.get('error', 'unknown')}"
-                )
-            else:
-                content_len = len(fast_result.get("content", ""))
-                fallback_reason = (
-                    f"Fast extraction returned insufficient content "
-                    f"({content_len} chars < {min_content_length} min)"
-                )
-
             # SPA 自动检测：如果快速结果看起来像 SPA 骨架，自动提升到 enhanced
-            content = fast_result.get("content", "")
-            if not enhanced and self._looks_like_spa(content):
+            if not enhanced and decision.should_enhance:
                 enhanced = True
+            fallback_reason = decision.fallback_reason
 
         # ── Phase 1b: 浏览器渲染降级 ─────────────────────────
         result = run_async(self._crawl(url, enhanced))
@@ -408,9 +429,12 @@ class Crawler:
         config.deep_crawl_strategy = BFSDeepCrawlStrategy(
             max_depth=depth, max_pages=pages
         )
+        dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
 
         async with AsyncWebCrawler(verbose=False) as crawler:
-            raw_result = await crawler.arun(url=url, config=config)
+            raw_result = await crawler.arun(
+                url=url, config=config, dispatcher=dispatcher
+            )
 
         # BFSDeepCrawlStrategy 返回列表，普通爬取返回单个结果
         results_list = raw_result if isinstance(raw_result, list) else [raw_result]
@@ -471,6 +495,9 @@ class Crawler:
         concurrent: int,
     ) -> List[Dict[str, Any]]:
         """仅对子集 URL 执行浏览器爬取，按 enhanced 标志分组"""
+        if len(urls) != len(enhanced_flags):
+            raise ValueError("urls and enhanced_flags must have the same length")
+
         normal_urls = [
             (i, u) for i, (u, e) in enumerate(zip(urls, enhanced_flags)) if not e
         ]
@@ -529,11 +556,11 @@ class Crawler:
 
             # 分离成功与需降级
             fallback_indices: List[int] = []
+            decisions: List[_FastExtractDecision] = []
             for i, fr in enumerate(fast_results):
-                if (
-                    fr.get("success")
-                    and len(fr.get("content", "")) >= min_content_length
-                ):
+                decision = self._decide_fast_extract_next_step(fr, min_content_length)
+                decisions.append(decision)
+                if not decision.should_fallback:
                     results[i] = self._normalize_fast_result(fr)
                 else:
                     fallback_indices.append(i)
@@ -545,30 +572,14 @@ class Crawler:
                 # ── Phase 2: 浏览器降级子集 ───────────────────────
                 fallback_urls = [urls[i] for i in fallback_indices]
                 # SPA 检测决定是否用 enhanced
-                enhanced_flags = [
-                    (
-                        not any(e for e in (False,) if True)  # placeholder
-                        or self._looks_like_spa(fast_results[i].get("content", ""))
-                    )
-                    for i in fallback_indices
-                ]
+                enhanced_flags = [decisions[i].should_enhance for i in fallback_indices]
                 browser_results = await self._browser_crawl_subset(
                     fallback_urls, enhanced_flags, concurrent
                 )
 
                 for idx, br in zip(fallback_indices, browser_results):
                     br["method"] = "browser_fallback"
-                    if not fast_results[idx].get("success"):
-                        br["fallback_reason"] = (
-                            f"Fast extraction failed: "
-                            f"{fast_results[idx].get('error', 'unknown')}"
-                        )
-                    else:
-                        content_len = len(fast_results[idx].get("content", ""))
-                        br["fallback_reason"] = (
-                            f"Insufficient content "
-                            f"({content_len} chars < {min_content_length})"
-                        )
+                    br["fallback_reason"] = decisions[idx].fallback_reason
                     results[idx] = br
         else:
             # prefer_fast=False：全部走浏览器

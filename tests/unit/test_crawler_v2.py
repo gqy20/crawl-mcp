@@ -502,6 +502,39 @@ class TestCrawlSiteV2:
         assert result["total_pages"] == 1
 
     @pytest.mark.asyncio
+    async def test_crawl_site_uses_concurrent_dispatcher(self):
+        """整站爬取应把 concurrent 传给 SemaphoreDispatcher"""
+        from crawl4ai_mcp.crawler import Crawler
+
+        crawler = Crawler()
+        mock_result = MagicMock(
+            success=True,
+            markdown=MagicMock(raw_markdown="Page content"),
+            metadata={"title": "Page"},
+        )
+
+        with (
+            patch("crawl4ai_mcp.crawler.SemaphoreDispatcher") as mock_dispatcher_cls,
+            patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy"),
+            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+        ):
+            dispatcher = MagicMock()
+            mock_dispatcher_cls.return_value = dispatcher
+            mock_instance = AsyncMock()
+            mock_instance.arun.return_value = mock_result
+            mock_cm = AsyncMock()
+            mock_cm.__aenter__.return_value = mock_instance
+            mock_cm.__aexit__ = AsyncMock()
+            mock_cls.return_value = mock_cm
+
+            await crawler._crawl_site(
+                "https://example.com", depth=2, pages=10, concurrent=4
+            )
+
+        mock_dispatcher_cls.assert_called_once_with(semaphore_count=4)
+        assert mock_instance.arun.call_args[1]["dispatcher"] is dispatcher
+
+    @pytest.mark.asyncio
     async def test_crawl_site_handles_failure(self):
         """爬取失败时应返回错误信息"""
         from crawl4ai_mcp.crawler import Crawler

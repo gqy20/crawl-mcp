@@ -233,4 +233,5 @@ class TestSyncWrappers:
         result = searcher._analyze_images([], "test")
 
         mock_run_async.assert_called_once()
+        mock_run_async.call_args.args[0].close()
         assert result["count"] == 1

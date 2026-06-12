@@ -117,11 +117,11 @@ pip install crawl-mcp
 
 **前提条件**：必须配置 `CRAWL_MCP_API_KEY`，否则会优雅跳过并在结果中返回 `llm_skipped` 提示。
 
-## 搜索功能
+## 工具用法
 
 ### crawl_single - 单页爬取（自动降级）
 
-**推荐使用**。内置「快速提取 → 浏览器渲染」自动降级策略：
+已知一个明确 URL、需要提取页面正文 Markdown 时使用。内置「快速提取 → 浏览器渲染」自动降级策略：
 
 ```json
 {
@@ -138,20 +138,71 @@ pip install crawl-mcp
   "success": true,
   "markdown": "# Article Title\n\nContent...",
   "title": "Article Title",
-  "method": "fast_extract",
-  "fallback_reason": null
+  "method": "fast_extract"
 }
 ```
 
 **可选参数**：
-- `enhanced`: 是否使用增强模式（适用于 SPA，默认 false，SPA 检测时自动启用）
+- `enhanced`: 浏览器增强模式，适用于 SPA/慢加载页面；只在浏览器路径生效
 - `prefer_fast`: 是否优先快速提取（默认 true，设 false 强制浏览器）
 - `min_content_length`: 快速提取最小内容长度阈值（默认 200 字符）
 - `llm_config`: LLM 后处理配置（实验性，需 API Key）
 
+> 若要强制浏览器增强模式，请同时设置 `prefer_fast=false` 和 `enhanced=true`。
+> `fallback_reason` 仅在快速提取失败后进入浏览器 fallback 时返回。
+
+### crawl_batch - 批量爬取多个明确 URL
+
+已知一组 URL、需要并行抓取多个页面时使用。它会先并行快速提取所有 URL，只把失败、内容不足或 SPA 骨架页送入浏览器 fallback。
+
+```json
+{
+  "name": "crawl_batch",
+  "arguments": {
+    "urls": [
+      "https://example.com/a",
+      "https://example.com/b"
+    ],
+    "concurrent": 3
+  }
+}
+```
+
+**可选参数**：
+- `concurrent`: 浏览器 fallback 并发数（默认 3）
+- `prefer_fast`: 是否优先快速提取（默认 true，设 false 时所有 URL 直接走浏览器）
+- `min_content_length`: 快速提取最小内容长度阈值（默认 200 字符）
+- `llm_config`: LLM 后处理配置（实验性，需 API Key）
+- `llm_concurrent`: LLM 后处理并发数（默认 3）
+
+返回为结果列表。`method` 仅在 `prefer_fast=true` 的快速/降级路径中出现；`fallback_reason` 仅在单项发生浏览器 fallback 时出现。
+
+### crawl_site - 从入口页递归爬站
+
+只有一个网站入口、希望沿站内链接发现并抓取若干页面时使用。它使用浏览器和 BFS 深度策略，不走快速提取，也不支持 LLM 后处理。
+
+```json
+{
+  "name": "crawl_site",
+  "arguments": {
+    "url": "https://example.com",
+    "depth": 2,
+    "pages": 10,
+    "concurrent": 3
+  }
+}
+```
+
+**参数**：
+- `depth`: 最大链接深度（默认 2）
+- `pages`: 最大页面数（默认 10）
+- `concurrent`: 浏览器爬取并发数（默认 3）
+
+返回包含 `successful_pages`、`total_pages`、`success_rate` 和 `results`。
+
 ### search_text - 通用网页搜索
 
-适用于搜索技术文档、百科、博客、论坛、教程等静态内容。
+适用于搜索技术文档、百科、博客、论坛、教程等网页内容。搜索工具只返回摘要和链接，不抓取页面正文；如需正文，请对结果 URL 再调用 `crawl_single` 或 `crawl_batch`。
 
 ```json
 {
@@ -207,7 +258,7 @@ pip install crawl-mcp
 
 ### search_books / search_videos
 
-图书搜索和视频搜索，用法与 `search_text` 类似。
+图书搜索和视频搜索，用法与 `search_text` 类似。返回字段由 ddgs 上游决定，通常包含标题、链接、摘要或媒体信息，具体字段会随来源变化。
 
 ## 开发
 

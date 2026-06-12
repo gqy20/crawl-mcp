@@ -52,19 +52,27 @@ def crawl_single(
     """
     爬取单个网页（自动降级：快速提取 → 浏览器渲染）
 
-    默认先尝试轻量级提取（~0.5s），失败或内容不足时自动切换到浏览器模式（~15-23s）。
-    如需强制使用浏览器（如已知目标为 SPA），设置 prefer_fast=False。
+    适用于已经知道一个明确 URL、需要提取该页面正文 Markdown 的场景。
+    默认先尝试轻量级快速提取（适合静态文章/文档页），失败、内容过短或检测到 SPA 骨架页时
+    自动切换到浏览器渲染。若要从一个入口页继续发现站内链接，请使用 crawl_site；
+    若已有多个明确 URL，请使用 crawl_batch。
+
+    参数组合：
+    - 默认 prefer_fast=True：先快提取，必要时 fallback 到浏览器。
+    - prefer_fast=False：跳过快速提取，强制直接使用浏览器。
+    - enhanced=True：只影响浏览器路径的等待时间；不会单独跳过快速提取。
+      如需强制浏览器增强模式，请同时设置 prefer_fast=False, enhanced=True。
 
     Args:
         url: 要爬取的网页 URL
-        enhanced: 是否使用增强模式（适用于 SPA 网站，等待时间更长）
+        enhanced: 浏览器增强模式。适用于 SPA/慢加载页面，等待时间更长；仅在浏览器路径生效。
         llm_config: [实验性] LLM 后处理配置（可选），需设置 CRAWL_MCP_API_KEY 才生效。
             支持三种格式:
             - 字典: {"instruction": "总结", "schema": {...}}
             - JSON 字符串: '{"instruction": "总结"}'
             - 纯文本: "总结页面内容"（自动作为 instruction）
             未设置 API Key 时传此参数会优雅跳过，结果中包含 llm_skipped 提示。
-        prefer_fast: 是否优先尝试快速提取（默认 True，设为 False 强制用浏览器）
+        prefer_fast: 是否优先尝试快速提取（默认 True）。设为 False 时强制浏览器爬取。
         min_content_length: 快速提取结果的最小内容长度阈值（默认 200 字符）
 
     Returns:
@@ -73,9 +81,12 @@ def crawl_single(
             markdown: str,
             title: str,
             error: str | None,
-            method: "fast_extract" | "browser_fallback",   # 新增
-            fallback_reason: str | None,                   # 新增（仅 browser_fallback 时）
-            llm_summary/llm_data/llm_skipped/llm_error: ...  # 可选 LLM 字段
+            method?: "fast_extract" | "browser_fallback",
+                # prefer_fast=True 时返回；prefer_fast=False 的纯浏览器路径可能不存在
+            fallback_reason?: str,
+                # 仅浏览器 fallback 时返回，说明快速提取失败或内容不足的原因
+            llm_summary?/llm_data?/llm_skipped?/llm_error?: ...
+                # 仅传入 llm_config 时可能出现
         }
     """
     return _crawler.crawl_single(
@@ -92,16 +103,28 @@ def crawl_site(
     ctx: Context | None = None,
 ) -> Dict[str, Any]:
     """
-    递归爬取整个网站
+    从入口页开始递归爬取站内页面（浏览器 + BFS 深度爬取）
+
+    适用于只有一个网站入口、希望沿站内链接抓取若干页面的场景。
+    与 crawl_batch 不同，本工具会从起始页发现链接；与 crawl_single/crawl_batch 不同，
+    本工具不走快速提取自动降级，也不支持 LLM 后处理。
 
     Args:
         url: 起始 URL
-        depth: 最大爬取深度（默认：2）
-        pages: 最大页面数（默认：10）
-        concurrent: 并发请求数（默认：3）
+        depth: 最大链接深度（默认 2）。数值越大，可能访问更多站内页面。
+        pages: 最大页面数（默认 10）。用于限制递归爬取规模。
+        concurrent: 浏览器爬取并发数（默认 3）。
 
     Returns:
-        包含 successful_pages, total_pages, success_rate, results 的字典
+        {
+            successful_pages: int,
+            total_pages: int,
+            success_rate: str,
+            results: [
+                {success: bool, markdown: str, title: str, error: str | None},
+                ...
+            ]
+        }
     """
     if ctx:
         ctx.info(f"开始爬取站点: {url} (深度={depth}, 最大页面={pages})")
@@ -126,8 +149,14 @@ def crawl_batch(
     """
     批量爬取多个网页（自动降级版）
 
-    默认对每个 URL 先尝试快速提取，失败或内容不足时自动 fallback 到浏览器渲染。
-    设置 prefer_fast=False 可退化到纯浏览器模式。
+    适用于已经有一组明确 URL、需要并行抓取多个页面的场景。
+    默认对所有 URL 并行快速提取；只有失败、内容过短或 SPA 骨架页才进入浏览器 fallback。
+    若只有一个 URL，请使用 crawl_single；若只有入口页并希望发现站内链接，请使用 crawl_site。
+
+    参数组合：
+    - prefer_fast=True：静态页走快速路径，失败项才走浏览器 fallback。
+    - prefer_fast=False：所有 URL 都直接走浏览器，不返回 fast/fallback 方法标记。
+    - min_content_length 只影响快速提取是否被认为足够完整。
 
     Args:
         urls: URL 列表
@@ -138,7 +167,20 @@ def crawl_batch(
         min_content_length: 快速提取最小内容长度阈值（默认 200 字符）
 
     Returns:
-        爬取结果列表，每项含 method / fallback_reason 等字段
+        [
+            {
+                success: bool,
+                markdown: str,
+                title: str,
+                error: str | None,
+                method?: "fast_extract" | "browser_fallback",
+                    # prefer_fast=True 时可能出现
+                fallback_reason?: str,
+                    # 仅 browser_fallback 项出现
+                llm_summary?/llm_data?/llm_skipped?/llm_error?: ...
+            },
+            ...
+        ]
     """
     if ctx:
         ctx.info(f"开始批量爬取: {len(urls)} 个 URL (并发={concurrent})")
@@ -162,7 +204,8 @@ def search_text(
     """
     搜索网页内容（通用搜索）
 
-    适用于搜索技术文档、百科、博客、论坛、教程等静态内容。
+    适用于搜索技术文档、百科、博客、论坛、教程等网页内容。
+    只返回搜索结果摘要和链接，不抓取页面正文；如需正文，请对结果 URL 再调用 crawl_single/crawl_batch。
 
     Args:
         query: 搜索关键词
@@ -203,6 +246,7 @@ def search_news(
     搜索新闻内容
 
     适用于搜索突发新闻、时事、财经、体育等时效性内容。
+    只返回新闻搜索结果摘要和来源链接，不抓取全文；如需全文，请对结果 URL 再调用 crawl_single。
 
     Args:
         query: 搜索关键词
@@ -250,7 +294,8 @@ def search_books(
         max_results: 最大结果数（默认：10）
 
     Returns:
-        包含搜索结果的字典，格式同 search_text
+        包含搜索结果的字典。results 的字段由 ddgs 返回，通常包含 title、url/href、body 等，
+        具体字段会随来源变化。
     """
     return _searcher.search_books(query, region, max_results)
 
@@ -276,7 +321,8 @@ def search_videos(
         max_results: 最大结果数（默认：10）
 
     Returns:
-        包含搜索结果的字典，格式同 search_text
+        包含搜索结果的字典。results 的字段由 ddgs 返回，通常包含 title、url/content/duration 等，
+        具体字段会随来源变化。
     """
     return _searcher.search_videos(query, region, safesearch, timelimit, max_results)
 
@@ -308,6 +354,8 @@ def search_images(
 
     === 搜索过滤 ===
     region: 区域代码 (wt-wt/us-en/cn-zh等)
+    safesearch: 安全搜索 (on/moderate/off)
+    timelimit: 时间限制 (d=天, w=周)
     size: 图片尺寸 (Small/Medium/Large/Wallpaper)
     color: 颜色过滤 (如 "Red", "Monochrome")
     type_image: 类型 (photo/clipart/gif/transparent/line)

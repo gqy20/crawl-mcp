@@ -12,10 +12,10 @@ uv sync
 uv run pytest
 
 # 运行特定测试文件
-uv run pytest tests/unit/test_crawler.py
+uv run pytest tests/unit/test_crawler_v2.py
 
 # 运行特定测试类/函数
-uv run pytest tests/unit/test_crawler.py::TestCrawlerSingle::test_crawl_single_success
+uv run pytest tests/unit/test_unified_crawl.py::TestUnifiedCrawlSingleFallback::test_fast_path_returns_markdown_format
 
 # 带覆盖率报告的测试
 uv run pytest -v --cov=src/crawl4ai_mcp --cov-report=term-missing
@@ -49,7 +49,7 @@ uv run crawl-mcp
 | 模块 | 职责 | 关键类/函数 |
 |------|------|-------------|
 | `crawler.py` | 网页爬取核心（自动降级：快速提取→浏览器） | `Crawler.crawl_single()`, `Crawler.crawl_batch()` |
-| `searcher.py` | 搜索 + 快速提取（ddgs.extract） | `Searcher.search_text()`, `Searcher.extract_url()` |
+| `searcher.py` | 搜索 + 内部快速提取（ddgs.extract，不作为 MCP 工具暴露） | `Searcher.search_text()`, `Searcher.extract_url()` |
 | `llm_config.py` | LLM 配置管理 | `get_default_llm_config()`, `LLMConfig` |
 | `fastmcp_server.py` | MCP 服务器入口，注册所有工具 | `@mcp.tool` 装饰器 |
 
@@ -64,7 +64,7 @@ uv run crawl-mcp
 
 ### 并发控制
 
-- **快速提取并发**：`crawl_batch` Phase 1 使用 `ThreadPoolExecutor` 并行 `extract_url`
+- **快速提取并发**：`crawl_batch` Phase 1 使用 `ThreadPoolExecutor` 并行内部 `Searcher.extract_url`
 - **浏览器爬取并发**：Phase 2 使用 `SemaphoreDispatcher`（`concurrent` 参数）
 - **LLM 并发**：批量 LLM 处理使用 `concurrent.futures.ThreadPoolExecutor`（`llm_concurrent` 参数）
 - **图片分析并发**：`search_images` 使用 `asyncio.Semaphore`（`analyze_concurrent` 参数）
@@ -91,12 +91,21 @@ uv run crawl-mcp
 
 | 工具 | 功能 | 关键参数 |
 |------|------|----------|
-| `crawl_single` | 单页爬取（**自动降级**：快速提取→浏览器） | `url`, `enhanced`, `llm_config`(实验性), `prefer_fast`, `min_content_length` |
-| `crawl_batch` | 批量爬取（**自动降级**，三阶段并行） | `urls`, `concurrent`, `llm_config`(实验性), `llm_concurrent`, `prefer_fast` |
-| `crawl_site` | 整站爬取（纯浏览器模式） | `url`, `depth`, `pages`, `concurrent` |
-| `search_text` | 通用网页搜索 | `query`, `region`, `max_results` |
-| `search_news` | 新闻搜索 | `query`, `timelimit`, `max_results` |
-| `search_images` | 图片搜索+下载+分析 | `query`, `download`, `analyze`, `analyze_concurrent` |
+| `crawl_single` | 单个明确 URL 的正文提取（快速提取→浏览器 fallback） | `url`, `enhanced`, `llm_config`(实验性), `prefer_fast`, `min_content_length` |
+| `crawl_batch` | 多个明确 URL 的批量正文提取（并行快速提取，失败项浏览器 fallback） | `urls`, `concurrent`, `llm_config`(实验性), `llm_concurrent`, `prefer_fast`, `min_content_length` |
+| `crawl_site` | 从入口页递归发现并爬取站内页面（浏览器+BFS，不支持 LLM） | `url`, `depth`, `pages`, `concurrent` |
+| `search_text` | 通用网页搜索，只返回摘要和链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results` |
+| `search_news` | 新闻搜索，只返回摘要和来源链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results` |
+| `search_books` | 图书/电子书搜索 | `query`, `region`, `max_results` |
+| `search_videos` | 视频搜索 | `query`, `region`, `safesearch`, `timelimit`, `max_results` |
+| `search_images` | 图片搜索+下载+分析 | `query`, `region`, `safesearch`, `timelimit`, `download`, `analyze`, `analyze_concurrent` |
+
+选择规则：
+- 单个已知 URL：`crawl_single`
+- 多个已知 URL：`crawl_batch`
+- 只有入口页、需要沿站内链接发现页面：`crawl_site`
+- 只需要找链接/素材，不需要正文：先用 `search_*`
+- `enhanced=True` 只影响浏览器路径；强制浏览器增强模式需同时设置 `prefer_fast=False`
 
 ### 环境变量
 
@@ -118,14 +127,34 @@ uv run crawl-mcp
     "markdown": str,
     "title": str,
     "error": str | None,
-    "method": "fast_extract" | "browser_fallback",  # 使用的提取方法
-    "fallback_reason": str | None,                   # 降级原因（仅 browser_fallback 时）
+    # prefer_fast=True 时可能出现；prefer_fast=False 纯浏览器路径可能不存在
+    "method": "fast_extract" | "browser_fallback",
+    # 仅 browser_fallback 时出现
+    "fallback_reason": str,
     # 可选 LLM 结果（仅当 llm_config + CRAWL_MCP_API_KEY 时出现）
     "llm_summary": str,       # 纯文本摘要
     "llm_data": dict,         # 结构化提取
     "llm_error": str,         # LLM 处理错误
     # LLM 跳过提示（传了 llm_config 但未配置 API Key）
     "llm_skipped": str,       # 跳过原因说明
+}
+```
+
+**站点爬取结果**（`crawl_site`）：
+```python
+{
+    "successful_pages": int,
+    "total_pages": int,
+    "success_rate": str,
+    "results": [
+        {
+            "success": bool,
+            "markdown": str,
+            "title": str,
+            "error": str | None,
+        },
+        ...
+    ],
 }
 ```
 

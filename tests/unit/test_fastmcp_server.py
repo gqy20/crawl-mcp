@@ -94,6 +94,44 @@ class TestSearchToolSchemas:
             assert param in sig.parameters
 
 
+class TestToolDescriptions:
+    """工具描述应给大模型足够的选择依据"""
+
+    def test_crawl_single_description_explains_fast_and_enhanced_modes(self):
+        desc = _get_tool("crawl_single").description
+
+        assert "crawl_batch" in desc
+        assert "crawl_site" in desc
+        assert "prefer_fast=False" in desc
+        assert "enhanced=True" in desc
+        assert "只影响浏览器路径" in desc
+
+    def test_crawl_batch_description_distinguishes_known_urls_from_site_crawl(self):
+        desc = _get_tool("crawl_batch").description
+
+        assert "一组明确 URL" in desc
+        assert "crawl_single" in desc
+        assert "crawl_site" in desc
+        assert "prefer_fast=False" in desc
+
+    def test_crawl_site_description_states_no_fast_extract_or_llm(self):
+        desc = _get_tool("crawl_site").description
+
+        assert "发现链接" in desc
+        assert "不走快速提取" in desc
+        assert "不支持 LLM 后处理" in desc
+
+    def test_search_descriptions_say_results_are_not_full_content(self):
+        assert "不抓取页面正文" in _get_tool("search_text").description
+        assert "不抓取全文" in _get_tool("search_news").description
+
+    def test_search_images_description_lists_safesearch_and_timelimit(self):
+        desc = _get_tool("search_images").description
+
+        assert "safesearch" in desc
+        assert "timelimit" in desc
+
+
 class TestCrawlToolFunctions:
     """爬取工具函数行为验证"""
 

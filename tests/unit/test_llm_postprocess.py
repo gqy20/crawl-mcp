@@ -1,7 +1,9 @@
 """LLM 后处理功能测试 - 对已爬取的 Markdown 进行处理"""
 
+from unittest.mock import MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from crawl4ai_mcp.crawler import Crawler
 
 
@@ -25,7 +27,7 @@ class TestLLMPostProcess:
 
         with (
             patch("crawl4ai_mcp.crawler._build_llm_config", return_value=MagicMock()),
-            patch("crawl4ai_mcp.crawler.LLMExtractionStrategy") as MockStrategy,
+            patch("crawl4ai.extraction_strategy.LLMExtractionStrategy") as MockStrategy,
         ):
             mock_instance = MagicMock()
             mock_instance.extract.return_value = mock_response
@@ -51,7 +53,7 @@ class TestLLMPostProcess:
 
         with (
             patch("crawl4ai_mcp.crawler._build_llm_config", return_value=MagicMock()),
-            patch("crawl4ai_mcp.crawler.LLMExtractionStrategy") as MockStrategy,
+            patch("crawl4ai.extraction_strategy.LLMExtractionStrategy") as MockStrategy,
         ):
             mock_instance = MagicMock()
             mock_instance.extract.return_value = mock_response

@@ -9,10 +9,10 @@
 - MCP 工具注册验证
 """
 
-from unittest.mock import patch, MagicMock, AsyncMock
-from crawl4ai_mcp.searcher import Searcher
 import tempfile
+from unittest.mock import AsyncMock, MagicMock, patch
 
+from crawl4ai_mcp.searcher import Searcher
 
 # ============================================================
 # 1. _search_wrapper — 核心搜索逻辑
@@ -351,7 +351,7 @@ class TestSearchImages:
 
     @patch("crawl4ai_mcp.searcher.DDGS")
     @patch("crawl4ai_mcp.searcher.requests.get")
-    @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
+    @patch("openai.AsyncOpenAI")
     def test_analyze_without_download_uses_url(
         self, mock_openai, mock_get, mock_ddgs_class, monkeypatch
     ):
@@ -421,6 +421,7 @@ class TestMCPToolRegistration:
 
     def _tool_names(self):
         import asyncio
+
         from crawl4ai_mcp.fastmcp_server import mcp
 
         return [t.name for t in asyncio.run(mcp.list_tools())]

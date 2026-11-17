@@ -3,13 +3,13 @@
 import asyncio
 import base64
 import concurrent.futures
-import requests
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Dict, Any, Optional, List
+from typing import Any
 from urllib.parse import urlparse
 
+import requests
 from ddgs import DDGS
-from openai import AsyncOpenAI
 
 from .llm_config import get_default_llm_config
 from .utils import run_async
@@ -22,9 +22,9 @@ class Searcher:
     def _filtered_search_params(
         region: str,
         safesearch: str,
-        timelimit: Optional[str],
+        timelimit: str | None,
         max_results: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """构造 DDGS 通用过滤参数。"""
         return {
             "region": region,
@@ -34,13 +34,13 @@ class Searcher:
         }
 
     @staticmethod
-    def _regional_search_params(region: str, max_results: int) -> Dict[str, Any]:
+    def _regional_search_params(region: str, max_results: int) -> dict[str, Any]:
         """构造只支持区域和数量限制的 DDGS 参数。"""
         return {"region": region, "max_results": max_results}
 
     def _search_wrapper(
         self, search_fn: Callable, query: str, **kwargs
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """通用搜索包装器，消除 search_text/search_news 的重复逻辑"""
         try:
             ddgs = DDGS()
@@ -64,9 +64,9 @@ class Searcher:
         query: str,
         region: str = "wt-wt",
         safesearch: str = "moderate",
-        timelimit: Optional[str] = None,
+        timelimit: str | None = None,
         max_results: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """文本搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.text(**kw),
@@ -79,9 +79,9 @@ class Searcher:
         query: str,
         region: str = "wt-wt",
         safesearch: str = "moderate",
-        timelimit: Optional[str] = None,
+        timelimit: str | None = None,
         max_results: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """新闻搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.news(**kw),
@@ -89,7 +89,7 @@ class Searcher:
             **self._filtered_search_params(region, safesearch, timelimit, max_results),
         )
 
-    def extract_url(self, url: str, fmt: str = "text_markdown") -> Dict[str, Any]:
+    def extract_url(self, url: str, fmt: str = "text_markdown") -> dict[str, Any]:
         """轻量级 URL 内容提取（基于 ddgs.extract，无需浏览器）
 
         适用于静态页面、文章、博客等不需要 JS 渲染的场景。
@@ -119,7 +119,7 @@ class Searcher:
         query: str,
         region: str = "wt-wt",
         max_results: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """图书搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.books(**kw),
@@ -132,9 +132,9 @@ class Searcher:
         query: str,
         region: str = "wt-wt",
         safesearch: str = "moderate",
-        timelimit: Optional[str] = None,
+        timelimit: str | None = None,
         max_results: int = 10,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """视频搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.videos(**kw),
@@ -147,19 +147,19 @@ class Searcher:
         query: str,
         region: str = "wt-wt",
         safesearch: str = "moderate",
-        timelimit: Optional[str] = None,
+        timelimit: str | None = None,
         max_results: int = 10,
-        size: Optional[str] = None,
-        color: Optional[str] = None,
-        type_image: Optional[str] = None,
-        layout: Optional[str] = None,
+        size: str | None = None,
+        color: str | None = None,
+        type_image: str | None = None,
+        layout: str | None = None,
         download: bool = False,
-        download_count: Optional[int] = None,
+        download_count: int | None = None,
         output_dir: str = "./downloads/images",
         analyze: bool = False,
         analysis_prompt: str = "详细描述这张图片的内容",
         analyze_concurrent: int = 3,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """图片搜索 + 下载 + 分析（一站式）"""
         search_params = self._filtered_search_params(
             region, safesearch, timelimit, max_results
@@ -222,8 +222,8 @@ class Searcher:
         return result
 
     def _download_images(
-        self, images: List[Dict], output_dir: str, max_concurrent: int = 3
-    ) -> Dict[str, Any]:
+        self, images: list[dict], output_dir: str, max_concurrent: int = 3
+    ) -> dict[str, Any]:
         """并行下载图片到本地"""
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
@@ -243,8 +243,7 @@ class Searcher:
                 response.raise_for_status()
 
                 with open(filepath, "wb") as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                    f.writelines(response.iter_content(chunk_size=8192))
 
                 return {
                     "success": True,
@@ -277,9 +276,11 @@ class Searcher:
         }
 
     async def _analyze_images_async(
-        self, images: List[Dict[str, str]], prompt: str, max_concurrent: int = 3
-    ) -> Dict[str, Any]:
+        self, images: list[dict[str, str]], prompt: str, max_concurrent: int = 3
+    ) -> dict[str, Any]:
         """并行调用图片分析模型"""
+        from openai import AsyncOpenAI  # 懒加载：仅图片分析需要
+
         try:
             config = get_default_llm_config()
             model = config.vision_model or "glm-4.6v"
@@ -289,7 +290,7 @@ class Searcher:
 
         semaphore = asyncio.Semaphore(max_concurrent)
 
-        async def analyze_single(img: Dict[str, str]) -> Dict[str, Any]:
+        async def analyze_single(img: dict[str, str]) -> dict[str, Any]:
             async with semaphore:
                 content = [{"type": "text", "text": prompt}]
 
@@ -330,8 +331,8 @@ class Searcher:
         return {"count": len(images), "results": list(results)}
 
     def _analyze_images(
-        self, images: List[Dict[str, str]], prompt: str
-    ) -> Dict[str, Any]:
+        self, images: list[dict[str, str]], prompt: str
+    ) -> dict[str, Any]:
         """调用图片分析模型（同步包装器）"""
         return run_async(self._analyze_images_async(images, prompt))
 

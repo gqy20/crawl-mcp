@@ -11,11 +11,11 @@
   8. 批量模式：全快 / 混合 / 全慢
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
 
 from crawl4ai_mcp.crawler import Crawler
-
 
 # ============================================================
 # 1. SPA 检测
@@ -440,7 +440,7 @@ class TestUnifiedCrawlBatch:
 
         with (
             patch.object(crawler._searcher, "extract_url", side_effect=fast_results),
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
             mock_instance = AsyncMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
@@ -513,7 +513,7 @@ class TestUnifiedCrawlBatch:
 
         with (
             patch.object(crawler._searcher, "extract_url") as mock_extract,
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
             mock_instance = AsyncMock()
             mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)

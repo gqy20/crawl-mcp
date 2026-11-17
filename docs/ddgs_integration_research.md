@@ -40,8 +40,8 @@ ddgs = DDGS()
 # 支持代理
 ddgs = DDGS(
     proxy="http://user:pass@example.com:3128",  # 支持 http/https/socks5
-    timeout=10,                                  # 超时时间
-    verify=True                                  # SSL 验证
+    timeout=10,  # 超时时间
+    verify=True,  # SSL 验证
 )
 
 # Tor Browser 代理别名
@@ -53,12 +53,12 @@ ddgs = DDGS(proxy="tb")  # "tb" 是 "socks5://127.0.0.1:9150" 的别名
 ```python
 results = DDGS().text(
     query="live free or die",
-    region="wt-wt",           # 区域: wt-wt(无区域), us-en, uk-en, cn-zh, etc.
-    safesearch="moderate",    # on, moderate, off
-    timelimit=None,           # d(天), w(周), m(月), y(年)
+    region="wt-wt",  # 区域: wt-wt(无区域), us-en, uk-en, cn-zh, etc.
+    safesearch="moderate",  # on, moderate, off
+    timelimit=None,  # d(天), w(周), m(月), y(年)
     max_results=10,
     page=1,
-    backend="auto"            # auto, html, lite
+    backend="auto",  # auto, html, lite
 )
 ```
 
@@ -68,9 +68,9 @@ results = DDGS().text(
     {
         "title": "News, sport, celebrities and gossip | The Sun",
         "href": "https://www.thesun.co.uk/",
-        "body": "Get the latest news, exclusives, sport..."
+        "body": "Get the latest news, exclusives, sport...",
     },
-    ...
+    ...,
 ]
 ```
 
@@ -83,11 +83,11 @@ results = DDGS().images(
     safesearch="moderate",
     timelimit="m",
     max_results=10,
-    size=None,              # Small, Medium, Large, Wallpaper
-    color="Monochrome",     # 颜色过滤
-    type_image=None,        # photo, clipart, gif, transparent, line
-    layout=None,            # Square, Tall, Wide
-    license_image=None      # Creative Commons 许可证
+    size=None,  # Small, Medium, Large, Wallpaper
+    color="Monochrome",  # 颜色过滤
+    type_image=None,  # photo, clipart, gif, transparent, line
+    layout=None,  # Square, Tall, Wide
+    license_image=None,  # Creative Commons 许可证
 )
 ```
 
@@ -101,9 +101,9 @@ results = DDGS().images(
         "url": "https://...",
         "height": 3860,
         "width": 4044,
-        "source": "Bing"
+        "source": "Bing",
     },
-    ...
+    ...,
 ]
 ```
 
@@ -116,9 +116,9 @@ results = DDGS().videos(
     safesearch="moderate",
     timelimit="w",
     max_results=10,
-    resolution="high",      # high, standard
-    duration="medium",       # short, medium, long
-    license_videos=None      # creativeCommon, youtube
+    resolution="high",  # high, standard
+    duration="medium",  # short, medium, long
+    license_videos=None,  # creativeCommon, youtube
 )
 ```
 
@@ -129,8 +129,8 @@ results = DDGS().news(
     query="sanctions",
     region="wt-wt",
     safesearch="moderate",
-    timelimit="d",           # d, w, m
-    max_results=20
+    timelimit="d",  # d, w, m
+    max_results=20,
 )
 ```
 
@@ -143,9 +143,9 @@ results = DDGS().news(
         "body": "Rupert Murdoch's Sun newspaper...",
         "url": "https://www.msn.com/...",
         "image": "https://...",
-        "source": "Bloomberg on MSN.com"
+        "source": "Bloomberg on MSN.com",
     },
-    ...
+    ...,
 ]
 ```
 
@@ -204,6 +204,7 @@ def search_text(
 ) -> List[Dict[str, str]]:
     """搜索网页，返回标题、链接和摘要"""
 
+
 # 2. search_images - 图片搜索
 @mcp.tool
 def search_images(
@@ -214,6 +215,7 @@ def search_images(
 ) -> List[Dict[str, str]]:
     """搜索图片，返回图片链接和缩略图"""
 
+
 # 3. search_news - 新闻搜索
 @mcp.tool
 def search_news(
@@ -223,6 +225,7 @@ def search_news(
     max_results: int = 10,
 ) -> List[Dict[str, str]]:
     """搜索新闻，返回最新新闻"""
+
 
 # 4. search_and_crawl - 搜索后爬取（组合功能）
 @mcp.tool
@@ -291,15 +294,18 @@ def _run_async(coro):
     try:
         asyncio.get_running_loop()
         import nest_asyncio
+
         nest_asyncio.apply()
         return asyncio.get_event_loop().run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
 
+
 # 使用示例
 def search_text(self, query: str, max_results: int = 10):
     def _sync_search():
         return DDGS().text(query, max_results=max_results)
+
     return _run_async(asyncio.to_thread(_sync_search))
 ```
 
@@ -426,10 +432,7 @@ class Searcher:
     ) -> List[Dict[str, str]]:
         """文本搜索"""
         results = self.ddgs.text(
-            query=query,
-            region=region,
-            timelimit=timelimit,
-            max_results=max_results
+            query=query, region=region, timelimit=timelimit, max_results=max_results
         )
         return results
 
@@ -468,6 +471,7 @@ class Searcher:
 from crawl4ai_mcp.searcher import Searcher
 
 _searcher = Searcher()
+
 
 @mcp.tool
 def search_text(

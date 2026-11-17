@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-17
+
+### Added
+- `crawl` CLI：终端/脚本直接爬取和搜索，复用 MCP 同一套核心
+  - `crawl <url>` 单页 Markdown 到 stdout；多 URL 自动批量输出 JSON
+  - `--browser` 强制浏览器、`--json` 完整结果、`crawl search <query>` 网页搜索
+  - `crawl site <url> [--depth] [--pages]` 站内递归爬取，输出 JSON
+  - `crawl search --news/--books/--videos` 覆盖全部搜索类型
+  - `crawl images <query> [--download]` 图片搜索/下载，下载项输出本地路径和大小，
+    供多模态模型/CLI 直接查看（内置 analyze 保留在 MCP）
+  - `--version` 版本输出；全命令支持 `--help`
+  - 进度日志导到 stderr，stdout 纯净可接管道；失败退出码 1
+
+### Changed
+- 重依赖懒加载：crawl4ai 改为浏览器/LLM 路径按需 import，openai 仅图片分析时 import，
+  `__init__.py` 改 PEP 562 懒导出（公开 API 不变）
+  - 快速提取路径导入链不再连带 crawl4ai/fastmcp/openai，CLI 冷启动端到端 ~1-2s
+  - 测试套件同步提速（不再为纯快速路径用例加载浏览器栈）
+
 ## [0.2.0] - 2026-06-12
 
 ### Added

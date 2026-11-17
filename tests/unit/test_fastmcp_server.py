@@ -2,8 +2,8 @@
 
 import asyncio
 import inspect
-
 from unittest.mock import patch
+
 from crawl4ai_mcp.fastmcp_server import mcp
 
 

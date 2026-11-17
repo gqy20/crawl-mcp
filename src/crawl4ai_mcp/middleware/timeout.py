@@ -53,6 +53,6 @@ class TimeoutMiddleware(Middleware):
 
         try:
             return await asyncio.wait_for(call_next(context), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning("Tool '%s' timed out after %.1fs", tool_name, timeout)
             raise

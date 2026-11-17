@@ -29,6 +29,10 @@ uv run python -m crawl4ai_mcp.fastmcp_server --http
 
 # 运行 MCP 服务器（生产模式，STDIO）
 uv run crawl-mcp
+
+# CLI（终端直接爬取/搜索，复用同一套核心）
+uv run crawl https://example.com          # 单页 Markdown 到 stdout
+uv run crawl search "关键词" -n 5          # 网页搜索
 ```
 
 ## 项目架构
@@ -52,6 +56,11 @@ uv run crawl-mcp
 | `searcher.py` | 搜索 + 内部快速提取（ddgs.extract，不作为 MCP 工具暴露） | `Searcher.search_text()`, `Searcher.extract_url()` |
 | `llm_config.py` | LLM 配置管理 | `get_default_llm_config()`, `LLMConfig` |
 | `fastmcp_server.py` | MCP 服务器入口，注册所有工具 | `@mcp.tool` 装饰器 |
+| `cli.py` | `crawl` CLI 入口（argparse 薄壳，转发到 Crawler/Searcher） | `main()` |
+
+**懒加载约定**：crawl4ai 只在浏览器/LLM 路径函数内 import，openai 只在图片分析时 import，
+`__init__.py` 用 PEP 562 懒导出。快速路径不得连带这些重依赖（有子进程测试锁定）。
+测试 mock 浏览器/LLM 类时 patch 源模块（如 `crawl4ai.AsyncWebCrawler`），不是 `crawl4ai_mcp.crawler.*`。
 
 ### 异步处理模式
 
@@ -132,11 +141,11 @@ uv run crawl-mcp
     # 仅 browser_fallback 时出现
     "fallback_reason": str,
     # 可选 LLM 结果（仅当 llm_config + CRAWL_MCP_API_KEY 时出现）
-    "llm_summary": str,       # 纯文本摘要
-    "llm_data": dict,         # 结构化提取
-    "llm_error": str,         # LLM 处理错误
+    "llm_summary": str,  # 纯文本摘要
+    "llm_data": dict,  # 结构化提取
+    "llm_error": str,  # LLM 处理错误
     # LLM 跳过提示（传了 llm_config 但未配置 API Key）
-    "llm_skipped": str,       # 跳过原因说明
+    "llm_skipped": str,  # 跳过原因说明
 }
 ```
 
@@ -153,7 +162,7 @@ uv run crawl-mcp
             "title": str,
             "error": str | None,
         },
-        ...
+        ...,
     ],
 }
 ```
@@ -162,21 +171,15 @@ uv run crawl-mcp
 **搜索结果**：
 ```python
 # search_text / search_news
-{
-    "success": bool,
-    "query": str,
-    "count": int,
-    "results": list,
-    "error": str | None
-}
+{"success": bool, "query": str, "count": int, "results": list, "error": str | None}
 
 # search_images
 {
     "success": bool,
     "query": str,
     "search_results": {"count": int, "results": list},
-    "download_results": {...},   # 仅当 download=True
-    "analysis_results": {...}    # 仅当 analyze=True
+    "download_results": {...},  # 仅当 download=True
+    "analysis_results": {...},  # 仅当 analyze=True
 }
 ```
 

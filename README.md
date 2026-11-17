@@ -50,6 +50,25 @@
 pip install crawl-mcp
 ```
 
+## CLI 用法
+
+安装后附带 `crawl` 命令，与 MCP 工具共用同一套核心，适合终端、脚本和管道：
+
+```bash
+crawl https://example.com/article          # 单页，Markdown 打到 stdout
+crawl https://example.com/article > page.md
+crawl --json https://example.com/article   # 完整 JSON（含 title/method 等）
+crawl --browser https://spa-site.com       # 强制浏览器渲染
+crawl https://a.com https://b.com          # 多 URL 批量并行，输出 JSON
+crawl site https://docs.example.com --depth 1 --pages 5   # 站内递归爬取，输出 JSON
+crawl search "python argparse" -n 5        # 网页搜索（摘要+链接）
+crawl search --news "AI" -n 5              # 新闻搜索（--books / --videos 同理）
+crawl search "python argparse" --json
+```
+
+退出码：成功 0，任一失败 1。进度日志走 stderr，stdout 只有正文/JSON，可放心接管道。
+静态页快速路径端到端约 1-2s（含进程启动）；`crawl-mcp` 命令仍用于启动 MCP 服务器。
+
 ## MCP 配置
 
 ### 基础配置（推荐，无需 API Key）

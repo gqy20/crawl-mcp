@@ -1,8 +1,9 @@
 """测试 MCP HTTP 客户端"""
 
 import asyncio
-from fastmcp.client.transports import StreamableHttpTransport
+
 from fastmcp import Client
+from fastmcp.client.transports import StreamableHttpTransport
 
 
 async def main():

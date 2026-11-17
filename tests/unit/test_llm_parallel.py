@@ -1,8 +1,10 @@
 """并行 LLM 处理单元测试"""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+
 from crawl4ai_mcp.crawler import Crawler
 from crawl4ai_mcp.searcher import Searcher
 
@@ -77,7 +79,7 @@ class TestAnalyzeImagesParallel:
     """测试并行图片分析"""
 
     @pytest.mark.asyncio
-    @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
+    @patch("openai.AsyncOpenAI")
     async def test_analyze_images_parallel_processes_multiple(self, mock_openai):
         """测试并行分析多张图片"""
         mock_config = MagicMock()
@@ -118,7 +120,7 @@ class TestAnalyzeImagesParallel:
         assert all("analysis" in r for r in result["results"])
 
     @pytest.mark.asyncio
-    @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
+    @patch("openai.AsyncOpenAI")
     async def test_analyze_images_with_local_files(self, mock_openai):
         """测试分析本地文件（base64 编码）"""
         mock_config = MagicMock()
@@ -167,7 +169,7 @@ class TestAnalyzeImagesParallel:
         assert any("data:image/jpeg;base64," in str(item) for item in content)
 
     @pytest.mark.asyncio
-    @patch("crawl4ai_mcp.searcher.AsyncOpenAI")
+    @patch("openai.AsyncOpenAI")
     async def test_analyze_images_mixed_url_and_local(self, mock_openai):
         """测试混合 URL 和本地文件"""
         mock_config = MagicMock()

@@ -9,7 +9,7 @@
 
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 @dataclass
@@ -23,12 +23,12 @@ class LLMConfig:
     base_url: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
     instruction: str = ""
-    schema: Optional[Dict[str, Any]] = None
+    schema: dict[str, Any] | None = None
     # 图片分析模型（可选）
-    vision_model: Optional[str] = None
+    vision_model: str | None = None
 
 
-def get_default_llm_config() -> Optional[LLMConfig]:
+def get_default_llm_config() -> LLMConfig | None:
     """从环境变量获取默认 LLM 配置
 
     环境变量:
@@ -52,7 +52,7 @@ def get_default_llm_config() -> Optional[LLMConfig]:
     )
 
 
-def get_llm_config(config: Optional[Dict[str, Any]]) -> Optional[LLMConfig]:
+def get_llm_config(config: dict[str, Any] | None) -> LLMConfig | None:
     """从环境变量获取 LLM 配置，合并用户提供的业务参数
 
     Args:

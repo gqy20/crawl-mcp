@@ -108,13 +108,15 @@ class Searcher:
             }
         """
         try:
-            results = list(self.ddgs.text(
-                query=query,
-                region=region,
-                safesearch=safesearch,
-                timelimit=timelimit,
-                max_results=max_results,
-            ))
+            results = list(
+                self.ddgs.text(
+                    query=query,
+                    region=region,
+                    safesearch=safesearch,
+                    timelimit=timelimit,
+                    max_results=max_results,
+                )
+            )
             return {
                 "success": True,
                 "query": query,
@@ -172,13 +174,15 @@ class Searcher:
             }
         """
         try:
-            results = list(self.ddgs.news(
-                keywords=query,
-                region=region,
-                safesearch=safesearch,
-                timelimit=timelimit,
-                max_results=max_results,
-            ))
+            results = list(
+                self.ddgs.news(
+                    keywords=query,
+                    region=region,
+                    safesearch=safesearch,
+                    timelimit=timelimit,
+                    max_results=max_results,
+                )
+            )
             return {
                 "success": True,
                 "query": query,
@@ -207,6 +211,7 @@ from crawl4ai_mcp.searcher import Searcher  # 新增
 # 读取包版本
 try:
     from importlib.metadata import version as get_version
+
     __version__ = get_version("crawl_mcp")
 except Exception:
     __version__ = "0.2.0"  # 版本号升级
@@ -222,6 +227,7 @@ _searcher = Searcher()
 
 
 # ========== 现有工具保持不变 ==========
+
 
 @mcp.tool
 def crawl_single(
@@ -256,6 +262,7 @@ def crawl_batch(
 
 
 # ========== 新增搜索工具 ==========
+
 
 @mcp.tool
 def search_text(
@@ -342,6 +349,7 @@ def search_news(
 def main():
     """CLI 入口点"""
     import sys
+
     if "--http" in sys.argv:
         mcp.run(transport="http", host="0.0.0.0", port=8001)
     else:
@@ -399,7 +407,7 @@ class TestSearcherText:
             },
         ]
 
-        with patch.object(searcher.ddgs, 'text', return_value=mock_results):
+        with patch.object(searcher.ddgs, "text", return_value=mock_results):
             result = searcher.search_text(query, max_results=10)
 
         # Assert
@@ -413,7 +421,7 @@ class TestSearcherText:
         """测试带时间限制的搜索"""
         searcher = Searcher()
 
-        with patch.object(searcher.ddgs, 'text', return_value=[]) as mock_text:
+        with patch.object(searcher.ddgs, "text", return_value=[]) as mock_text:
             searcher.search_text("news", timelimit="d", max_results=5)
 
         # 验证参数传递
@@ -426,7 +434,9 @@ class TestSearcherText:
         """测试错误处理"""
         searcher = Searcher()
 
-        with patch.object(searcher.ddgs, 'text', side_effect=Exception("Network error")):
+        with patch.object(
+            searcher.ddgs, "text", side_effect=Exception("Network error")
+        ):
             result = searcher.search_text("test")
 
         assert result["success"] is False
@@ -453,7 +463,7 @@ class TestSearcherNews:
             }
         ]
 
-        with patch.object(searcher.ddgs, 'news', return_value=mock_results):
+        with patch.object(searcher.ddgs, "news", return_value=mock_results):
             result = searcher.search_news(query, max_results=10)
 
         assert result["success"] is True
@@ -465,7 +475,7 @@ class TestSearcherNews:
         """测试新闻搜索错误处理"""
         searcher = Searcher()
 
-        with patch.object(searcher.ddgs, 'news', side_effect=Exception("API error")):
+        with patch.object(searcher.ddgs, "news", side_effect=Exception("API error")):
             result = searcher.search_news("test")
 
         assert result["success"] is False

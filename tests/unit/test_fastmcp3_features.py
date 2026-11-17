@@ -118,8 +118,9 @@ class TestStreamableHttpTransport:
 
     def test_main_function_uses_streamable_http(self):
         """main() 函数的 HTTP 模式应使用 streamable-http 而非 http"""
-        from crawl4ai_mcp.fastmcp_server import main
         import inspect
+
+        from crawl4ai_mcp.fastmcp_server import main
 
         source = inspect.getsource(main)
         # 不应出现旧的 transport="http"

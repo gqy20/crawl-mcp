@@ -11,9 +11,9 @@
 """
 
 import asyncio
-import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ============================================================
 # 1. 公共 _run_async 工具函数
@@ -72,7 +72,7 @@ class TestCrawlSingleTwoPhase:
             metadata={"title": "Test"},
         )
 
-        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls:
+        with patch("crawl4ai.AsyncWebCrawler") as mock_cls:
             mock_crawler_instance = AsyncMock()
             mock_crawler_instance.arun.return_value = mock_result
             mock_cls.return_value.__aenter__.return_value = mock_crawler_instance
@@ -98,7 +98,7 @@ class TestCrawlSingleTwoPhase:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
             patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler,
@@ -135,7 +135,7 @@ class TestCrawlSingleTwoPhase:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
             patch("crawl4ai_mcp.crawler._llm_available", return_value=False),
             patch.object(crawler, "_postprocess_with_llm") as mock_llm,
         ):
@@ -170,7 +170,7 @@ class TestCrawlSingleTwoPhase:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
             patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler,
@@ -197,7 +197,7 @@ class TestCrawlSingleTwoPhase:
         crawler = Crawler()
 
         with (
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
             patch.object(crawler, "_postprocess_with_llm") as mock_llm,
         ):
             mock_crawler_instance = AsyncMock()
@@ -248,7 +248,7 @@ class TestBrowserReuse:
 
         failing_then_success = make_failing_then_success()
 
-        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls:
+        with patch("crawl4ai.AsyncWebCrawler") as mock_cls:
             mock_instance = AsyncMock()
             mock_instance.arun = failing_then_success
             mock_cm = AsyncMock()
@@ -268,7 +268,7 @@ class TestBrowserReuse:
 
         crawler = Crawler()
 
-        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls:
+        with patch("crawl4ai.AsyncWebCrawler") as mock_cls:
             mock_instance = AsyncMock()
             mock_instance.arun.side_effect = ValueError("Bad URL")
             mock_cm = AsyncMock()
@@ -305,7 +305,7 @@ class TestCrawlBatchV2:
             for i in range(3)
         ]
 
-        with patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls:
+        with patch("crawl4ai.AsyncWebCrawler") as mock_cls:
             mock_instance = AsyncMock()
             mock_instance.arun_many.return_value = mock_results
             mock_cm = AsyncMock()
@@ -347,7 +347,7 @@ class TestCrawlBatchV2:
         ]
 
         with (
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
             patch("crawl4ai_mcp.crawler._llm_available", return_value=True),
             patch.object(
                 crawler,
@@ -395,7 +395,7 @@ class TestCrawlBatchV2:
         ]
 
         with (
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
             patch("crawl4ai_mcp.crawler._llm_available", return_value=False),
             patch.object(crawler, "_postprocess_batch_with_llm") as mock_llm,
         ):
@@ -443,8 +443,8 @@ class TestCrawlSiteV2:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy") as mock_strategy_cls,
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.BFSDeepCrawlStrategy") as mock_strategy_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
             mock_strategy_cls.return_value = MagicMock()
             mock_instance = AsyncMock()
@@ -480,8 +480,8 @@ class TestCrawlSiteV2:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy") as mock_strategy_cls,
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.BFSDeepCrawlStrategy") as mock_strategy_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
             mock_strategy_cls.return_value = MagicMock()
             mock_instance = AsyncMock()
@@ -514,9 +514,9 @@ class TestCrawlSiteV2:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.SemaphoreDispatcher") as mock_dispatcher_cls,
-            patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy"),
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.SemaphoreDispatcher") as mock_dispatcher_cls,
+            patch("crawl4ai.BFSDeepCrawlStrategy"),
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
             dispatcher = MagicMock()
             mock_dispatcher_cls.return_value = dispatcher
@@ -548,8 +548,8 @@ class TestCrawlSiteV2:
         )
 
         with (
-            patch("crawl4ai_mcp.crawler.BFSDeepCrawlStrategy") as mock_strategy_cls,
-            patch("crawl4ai_mcp.crawler.AsyncWebCrawler") as mock_cls,
+            patch("crawl4ai.BFSDeepCrawlStrategy") as mock_strategy_cls,
+            patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
             mock_strategy_cls.return_value = MagicMock()
             mock_instance = AsyncMock()
@@ -585,7 +585,7 @@ class TestNoDeadCode:
         """crawler.py 不应使用旧的 Crawl4AILLMConfig 别名"""
         import crawl4ai_mcp.crawler as crawler_module
 
-        source = getattr(crawler_module, "__file__")
+        source = crawler_module.__file__
         if source:
             with open(source) as f:
                 code = f.read()
@@ -605,7 +605,7 @@ class TestSearcherUsesSharedUtils:
         """searcher.py 不应有自己的 _run_async 定义"""
         import crawl4ai_mcp.searcher as searcher_module
 
-        source = getattr(searcher_module, "__file__")
+        source = searcher_module.__file__
         if source:
             with open(source) as f:
                 code = f.read()

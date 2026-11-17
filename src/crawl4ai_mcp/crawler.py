@@ -12,22 +12,13 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from typing import List, Dict, Any, Optional
+from typing import Any
 
-from crawl4ai import (
-    AsyncWebCrawler,
-    CrawlerRunConfig,
-    DefaultMarkdownGenerator,
-    BFSDeepCrawlStrategy,
-    SemaphoreDispatcher,
-)
-from crawl4ai.extraction_strategy import LLMExtractionStrategy
-from crawl4ai.types import create_llm_config
-
+# crawl4ai 重依赖（~0.8s import）按需懒加载：只有浏览器/LLM 路径才 import，
+# 快速提取路径（ddgs.extract）和 CLI 冷启动不付这个成本。
 from .llm_config import get_default_llm_config
 from .searcher import Searcher
 from .utils import run_async
-
 
 # ── 常量 ────────────────────────────────────────────────────────
 
@@ -43,7 +34,7 @@ SPA_INDICATORS = [
 ]
 
 
-def _calculate_success_rate(results: List[Dict[str, Any]]) -> str:
+def _calculate_success_rate(results: list[dict[str, Any]]) -> str:
     """计算成功率"""
     if not results:
         return "0%"
@@ -51,7 +42,7 @@ def _calculate_success_rate(results: List[Dict[str, Any]]) -> str:
     return f"{successful / len(results) * 100:.1f}%"
 
 
-def _parse_llm_config(llm_config: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _parse_llm_config(llm_config: dict[str, Any] | None) -> dict[str, Any] | None:
     """解析 llm_config，兼容字符串和字典两种格式"""
     if llm_config is None:
         return None
@@ -74,6 +65,8 @@ def _build_llm_config():
     cfg = get_default_llm_config()
     if cfg is None:
         return None
+    from crawl4ai.types import create_llm_config
+
     return create_llm_config(
         provider=f"openai/{cfg.model}",
         api_token=cfg.api_key,
@@ -95,7 +88,7 @@ class _FastExtractDecision:
     """快速提取后的下一步动作。"""
 
     should_fallback: bool
-    fallback_reason: Optional[str] = None
+    fallback_reason: str | None = None
     should_enhance: bool = False
 
 
@@ -108,7 +101,7 @@ class Crawler:
       - LLM 后处理为可选插件功能
     """
 
-    def __init__(self, searcher: Optional[Searcher] = None):
+    def __init__(self, searcher: Searcher | None = None):
         self._searcher = searcher or Searcher()
 
     # ── 辅助方法 ──────────────────────────────────────────────
@@ -131,7 +124,7 @@ class Crawler:
             return match.group(1).strip()
         return ""
 
-    def _normalize_fast_result(self, extract_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_fast_result(self, extract_result: dict[str, Any]) -> dict[str, Any]:
         """将 extract_url 的输出格式标准化为 crawl_single 格式
 
         映射：content → markdown, 新增 title / method 字段
@@ -146,7 +139,7 @@ class Crawler:
         }
 
     def _decide_fast_extract_next_step(
-        self, extract_result: Dict[str, Any], min_content_length: int
+        self, extract_result: dict[str, Any], min_content_length: int
     ) -> _FastExtractDecision:
         """判断快速提取结果是否需要浏览器降级，以及是否启用 enhanced。"""
         content = extract_result.get("content", "")
@@ -169,8 +162,8 @@ class Crawler:
         )
 
     def _apply_llm_postprocess(
-        self, result: Dict[str, Any], parsed_llm: Dict[str, Any]
-    ) -> Dict[str, Any]:
+        self, result: dict[str, Any], parsed_llm: dict[str, Any]
+    ) -> dict[str, Any]:
         """对成功的爬取结果应用 LLM 后处理（统一 fast / browser 路径）"""
         if not _llm_available():
             result["llm_skipped"] = (
@@ -193,8 +186,10 @@ class Crawler:
 
         return result
 
-    def _create_config(self, enhanced: bool = False) -> CrawlerRunConfig:
+    def _create_config(self, enhanced: bool = False):
         """创建爬虫配置"""
+        from crawl4ai import CrawlerRunConfig, DefaultMarkdownGenerator
+
         markdown_generator = DefaultMarkdownGenerator(
             options={
                 "citations": False,
@@ -212,9 +207,11 @@ class Crawler:
         self,
         url: str,
         enhanced: bool = False,
-        llm_config: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        llm_config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """内部异步爬取方法（浏览器实例复用版）"""
+        from crawl4ai import AsyncWebCrawler
+
         config = self._create_config(enhanced)
         max_retries = 3
 
@@ -250,7 +247,7 @@ class Crawler:
 
     def _postprocess_with_llm(
         self, markdown: str, instruction: str, schema=None
-    ) -> Dict:
+    ) -> dict:
         """使用原生 LLMExtractionStrategy 做后处理
 
         .. deprecated::
@@ -260,6 +257,8 @@ class Crawler:
         if not instruction or not instruction.strip():
             return {"success": True, "original_markdown": markdown, "skipped": True}
 
+        from crawl4ai.extraction_strategy import LLMExtractionStrategy
+
         llm_cfg = _build_llm_config()
         if llm_cfg is None:
             return {
@@ -268,11 +267,11 @@ class Crawler:
                 "content": markdown,
             }
 
-        kw = dict(
-            llm_config=llm_cfg,
-            instruction=instruction,
-            extraction_type="schema" if schema else "block",
-        )
+        kw = {
+            "llm_config": llm_cfg,
+            "instruction": instruction,
+            "extraction_type": "schema" if schema else "block",
+        }
         if schema:
             kw["schema"] = schema
 
@@ -305,8 +304,8 @@ class Crawler:
         return {"success": True, "summary": summary}
 
     async def _postprocess_batch_with_llm(
-        self, items: List[Dict], instruction: str, schema=None, max_concurrent=3
-    ) -> List[Dict]:
+        self, items: list[dict], instruction: str, schema=None, max_concurrent=3
+    ) -> list[dict]:
         """使用原生 LLMExtractionStrategy 并行做批量后处理
 
         .. deprecated::
@@ -318,14 +317,18 @@ class Crawler:
 
         import concurrent.futures
 
+        from crawl4ai.extraction_strategy import LLMExtractionStrategy
+
         llm_cfg = _build_llm_config()
         if llm_cfg is None:
             return [{"__index__": i, "__error__": True} for i in range(len(items))]
 
         extraction_type = "schema" if schema else "block"
-        kw = dict(
-            llm_config=llm_cfg, instruction=instruction, extraction_type=extraction_type
-        )
+        kw = {
+            "llm_config": llm_cfg,
+            "instruction": instruction,
+            "extraction_type": extraction_type,
+        }
         if schema:
             kw["schema"] = schema
 
@@ -368,10 +371,10 @@ class Crawler:
         self,
         url: str,
         enhanced: bool = False,
-        llm_config: Optional[Dict[str, Any]] = None,
+        llm_config: dict[str, Any] | None = None,
         prefer_fast: bool = True,
         min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """爬取单个网页（自动降级：快速提取 → 浏览器渲染）
 
         默认先尝试轻量级提取（~0.5s），失败或内容不足时自动切换到浏览器模式（~15-23s）。
@@ -423,8 +426,10 @@ class Crawler:
 
     async def _crawl_site(
         self, url: str, depth: int = 2, pages: int = 10, concurrent: int = 3
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """整站深度爬取（使用 BFSDeepCrawlStrategy）"""
+        from crawl4ai import AsyncWebCrawler, BFSDeepCrawlStrategy, SemaphoreDispatcher
+
         config = self._create_config()
         config.deep_crawl_strategy = BFSDeepCrawlStrategy(
             max_depth=depth, max_pages=pages
@@ -458,7 +463,7 @@ class Crawler:
 
     def crawl_site(
         self, url: str, depth: int = 2, pages: int = 10, concurrent: int = 3
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """爬取整个网站（同步封装）"""
         return run_async(
             self._crawl_site(url, depth=depth, pages=pages, concurrent=concurrent)
@@ -469,7 +474,7 @@ class Crawler:
     # ================================================================
 
     @staticmethod
-    def _format_crawl4ai_result(raw) -> Dict[str, Any]:
+    def _format_crawl4ai_result(raw) -> dict[str, Any]:
         """将 crawl4ai 原始结果标准化为统一字典格式"""
         return {
             "success": raw.success,
@@ -478,7 +483,7 @@ class Crawler:
             "error": raw.error_message if not raw.success else None,
         }
 
-    async def _parallel_fast_extract(self, urls: List[str]) -> List[Dict[str, Any]]:
+    async def _parallel_fast_extract(self, urls: list[str]) -> list[dict[str, Any]]:
         """并行快速提取多个 URL（ThreadPoolExecutor，DDGS 是同步的）"""
         import concurrent.futures
 
@@ -490,10 +495,10 @@ class Crawler:
 
     async def _browser_crawl_subset(
         self,
-        urls: List[str],
-        enhanced_flags: List[bool],
+        urls: list[str],
+        enhanced_flags: list[bool],
         concurrent: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """仅对子集 URL 执行浏览器爬取，按 enhanced 标志分组"""
         if len(urls) != len(enhanced_flags):
             raise ValueError("urls and enhanced_flags must have the same length")
@@ -510,6 +515,8 @@ class Crawler:
         async def crawl_group(url_list, is_enhanced):
             if not url_list:
                 return []
+            from crawl4ai import AsyncWebCrawler, SemaphoreDispatcher
+
             config = self._create_config(enhanced=is_enhanced)
             _, group_urls = zip(*url_list)
             dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
@@ -532,13 +539,13 @@ class Crawler:
 
     async def _crawl_batch(
         self,
-        urls: List[str],
+        urls: list[str],
         concurrent: int = 3,
-        llm_config: Optional[Dict[str, Any]] = None,
+        llm_config: dict[str, Any] | None = None,
         llm_concurrent: int = 3,
         prefer_fast: bool = True,
         min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """批量爬取（三阶段：并行快提取 → 选浏览器 → LLM 后处理）
 
         Phase 1: 并行快速提取所有 URL（~0.5s each）
@@ -548,15 +555,15 @@ class Crawler:
         if not urls:
             return []
 
-        results: List[Optional[Dict[str, Any]]] = [None] * len(urls)
+        results: list[dict[str, Any] | None] = [None] * len(urls)
 
         # ── Phase 1: 并行快速提取 ─────────────────────────────
         if prefer_fast:
             fast_results = await self._parallel_fast_extract(urls)
 
             # 分离成功与需降级
-            fallback_indices: List[int] = []
-            decisions: List[_FastExtractDecision] = []
+            fallback_indices: list[int] = []
+            decisions: list[_FastExtractDecision] = []
             for i, fr in enumerate(fast_results):
                 decision = self._decide_fast_extract_next_step(fr, min_content_length)
                 decisions.append(decision)
@@ -583,6 +590,8 @@ class Crawler:
                     results[idx] = br
         else:
             # prefer_fast=False：全部走浏览器
+            from crawl4ai import AsyncWebCrawler, SemaphoreDispatcher
+
             config = self._create_config(enhanced=False)
             dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
             async with AsyncWebCrawler(verbose=False) as crawler:
@@ -622,13 +631,13 @@ class Crawler:
 
     def crawl_batch(
         self,
-        urls: List[str],
+        urls: list[str],
         concurrent: int = 3,
-        llm_config: Optional[Dict[str, Any]] = None,
+        llm_config: dict[str, Any] | None = None,
         llm_concurrent: int = 3,
         prefer_fast: bool = True,
         min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """批量爬取多个网页（自动降级版）
 
         默认对每个 URL 先尝试快速提取，失败或内容不足时自动 fallback 到浏览器渲染。

@@ -1,10 +1,12 @@
 """FastMCP 服务器实现"""
 
-from typing import List, Dict, Any, Optional, Union
-from fastmcp import FastMCP, Context
+from typing import Any
+
+from fastmcp import Context, FastMCP
+
 from crawl4ai_mcp.crawler import Crawler
-from crawl4ai_mcp.searcher import Searcher
 from crawl4ai_mcp.middleware.timeout import TimeoutMiddleware
+from crawl4ai_mcp.searcher import Searcher
 
 # 读取包版本
 try:
@@ -12,7 +14,7 @@ try:
 
     __version__ = get_version("crawl_mcp")
 except Exception:
-    __version__ = "0.2.0"
+    __version__ = "0.2.1"
 
 # 创建 FastMCP 实例
 mcp = FastMCP(name="crawl-mcp", version=__version__)
@@ -45,10 +47,10 @@ _crawler = Crawler(searcher=_searcher)
 def crawl_single(
     url: str,
     enhanced: bool = False,
-    llm_config: Optional[Union[Dict[str, Any], str]] = None,
+    llm_config: dict[str, Any] | str | None = None,
     prefer_fast: bool = True,
     min_content_length: int = 200,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     爬取单个网页（自动降级：快速提取 → 浏览器渲染）
 
@@ -101,7 +103,7 @@ def crawl_site(
     pages: int = 10,
     concurrent: int = 3,
     ctx: Context | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     从入口页开始递归爬取站内页面（浏览器 + BFS 深度爬取）
 
@@ -138,14 +140,14 @@ def crawl_site(
 
 @mcp.tool(timeout=180, tags={"crawl"})
 def crawl_batch(
-    urls: List[str],
+    urls: list[str],
     concurrent: int = 3,
-    llm_config: Optional[Union[Dict[str, Any], str]] = None,
+    llm_config: dict[str, Any] | str | None = None,
     llm_concurrent: int = 3,
     prefer_fast: bool = True,
     min_content_length: int = 200,
     ctx: Context | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """
     批量爬取多个网页（自动降级版）
 
@@ -198,9 +200,9 @@ def search_text(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
-    timelimit: Optional[str] = None,
+    timelimit: str | None = None,
     max_results: int = 10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索网页内容（通用搜索）
 
@@ -239,9 +241,9 @@ def search_news(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
-    timelimit: Optional[str] = None,
+    timelimit: str | None = None,
     max_results: int = 10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索新闻内容
 
@@ -282,7 +284,7 @@ def search_books(
     query: str,
     region: str = "wt-wt",
     max_results: int = 10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索图书
 
@@ -305,9 +307,9 @@ def search_videos(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
-    timelimit: Optional[str] = None,
+    timelimit: str | None = None,
     max_results: int = 10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索视频
 
@@ -332,19 +334,19 @@ def search_images(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
-    timelimit: Optional[str] = None,
+    timelimit: str | None = None,
     max_results: int = 10,
-    size: Optional[str] = None,
-    color: Optional[str] = None,
-    type_image: Optional[str] = None,
-    layout: Optional[str] = None,
+    size: str | None = None,
+    color: str | None = None,
+    type_image: str | None = None,
+    layout: str | None = None,
     download: bool = False,
-    download_count: Optional[int] = None,
+    download_count: int | None = None,
     output_dir: str = "./downloads/images",
     analyze: bool = False,
     analysis_prompt: str = "详细描述这张图片的内容",
     analyze_concurrent: int = 3,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     搜索图片（支持下载和分析）
 

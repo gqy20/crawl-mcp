@@ -25,6 +25,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `__init__.py` 改 PEP 562 懒导出（公开 API 不变）
   - 快速提取路径导入链不再连带 crawl4ai/fastmcp/openai，CLI 冷启动端到端 ~1-2s
   - 测试套件同步提速（不再为纯快速路径用例加载浏览器栈）
+- 类型注解现代化（ruff --fix）：`Dict[str, Any]` → `dict[str, Any]` 等
+- `pyproject.toml` 显式固定 ruff 规则集（`E4,E7,E9,F,C4`）：ruff 新版本默认规则变化
+  会让 CI 行为漂移；dev 依赖钉 `ruff>=0.17.5,<0.18`
+- README 补充浏览器依赖说明：浏览器降级路径需先 `playwright install chromium`
+
+### Verified
+在以下依赖组合下跑通全部 170 个测试，并实测 MCP 服务器启动、浏览器降级、站内爬取、
+CLI 爬取/搜索/图片下载：
+- crawl4ai 0.9.5 / fastmcp 4.2.0 / ddgs 9.16.1 / playwright 1.65.2（当前最新）
+- crawl4ai 0.8.6 / fastmcp 3.4.2 / ddgs 9.14.1 / playwright 1.55.0（`pyproject.toml` 下限）
+- `pyproject.toml` 的版本下限保持不变，兼容两端；推荐使用 4.x / 0.9.x
+- crawl4ai 0.9.0 的 breaking changes 仅针对自托管 Docker HTTP 服务器，pip SDK 用法不受影响；
+  0.9.5 修复了 BFS 深爬 `max_pages` 计数（`crawl_site` 受益）
+
 
 ## [0.2.0] - 2026-06-12
 

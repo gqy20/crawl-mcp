@@ -50,6 +50,14 @@
 pip install crawl-mcp
 ```
 
+浏览器降级路径（SPA / 动态页）需要 Chromium 二进制，**首次使用浏览器功能前**装一次：
+
+```bash
+playwright install chromium   # 约 600MB，或用 crawl4ai-setup 一键安装
+```
+
+只做搜索和静态页快速提取的话不需要浏览器，pip 装完即可用。
+
 ## CLI 用法
 
 安装后附带 `crawl` 命令，与 MCP 工具共用同一套核心，适合终端、脚本和管道：

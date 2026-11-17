@@ -33,27 +33,58 @@ uv run crawl-mcp
 # CLI（终端直接爬取/搜索，复用同一套核心）
 uv run crawl https://example.com          # 单页 Markdown 到 stdout
 uv run crawl search "关键词" -n 5          # 网页搜索
+
+# 跑基准测试，更新 docs/BENCHMARK.md（quick 约 90s）
+uv run python scripts/bench.py
+uv run python scripts/bench.py --full      # 完整数据集
 ```
+
+### Benchmark 机制
+
+`scripts/bench.py` 跑一遍代表性渠道（政府政策、学术期刊、代码托管、公众号）的完整降级链路
+和搜索查询，把结果渲染成 `docs/BENCHMARK.md`，明细追加到 `docs/bench-history.jsonl`。
+
+用例是三元组 `(渠道, URL, 预期)`：
+
+- `预期 = None` → 期望成功且正文 ≥200 字
+- `预期 = ("error", code)` → **已知问题站点的回归用例**，期望失败且 `error_code` 匹配。
+  这类用例（中科院空模板、网信办失效页）不是要跑通，而是要保证「失败得对」——
+  `error_code` 变了就是判定逻辑退化。quick 9 个用例，full 20 个。
+
+表格里的 `分段耗时` 是 `fast / cloud / browser` 三段各花了多久，
+一眼看出慢在降级链路的哪一环。
+
+自动更新已接好两处，**改完代码不需要手动维护文档**：
+
+- **pre-commit hook**：改动 `src/**/*.py` 时自动重跑（源码指纹未变则跳过），
+  生成结果 `git add` 后随本次提交一起提交；网络不通时保留上次结果，不阻塞提交
+- **Claude Code Stop hook**（`.claude/settings.json`）：会话结束时同样自动重跑
+
+`.bench-stamp` 存源码指纹（已 gitignore），用于判断是否需要重跑。
 
 ## 项目架构
 
 ### 核心设计：自动降级爬取 + 可选 LLM 插件
 
-本项目定位为**专业网页爬取工具**，内置「快速提取 → 浏览器渲染」自动降级策略：
+降级链路：
 
 1. **阶段 0：快速提取**（~0.3-0.6s）— 基于 `ddgs.extract()`，适用于静态页面
-2. **阶段 1：浏览器降级**（~15-23s）— 快速提取失败或内容不足时自动切换到 Playwright
-3. **阶段 2：可选 LLM 插件** — 仅当提供 `llm_config` **且**配置了 `CRAWL_MCP_API_KEY` 时执行
+2. **阶段 0.5：Cloud 兜底**（~1-2s）— 快速提取失败或内容不足时，若配置了 `CRAWL4AI_API_KEY`
+   则先调 Crawl4AI Cloud `/scrape`，成功即返回，失败继续走浏览器
+3. **阶段 1：浏览器降级**（~15-23s）— 快速提取失败或内容不足时自动切换到 Playwright
+4. **阶段 2：可选 LLM 插件** — 仅当提供 `llm_config` **且**配置了 `CRAWL_MCP_API_KEY` 时执行
 
-> **设计原则**：不配置 API Key 时，工具完全作为纯爬取工具使用，零依赖外部 LLM 服务。
-> 用户拿到 Markdown 后可自行调用任何 LLM 处理。静态页享受 0.5s 速度，SPA 自动降级到浏览器。
+设计取向：LLM 是可选插件而非必经环节，用户拿到 Markdown 后可自行调用任意 LLM 处理。
 
 ### 模块职责
 
 | 模块 | 职责 | 关键类/函数 |
 |------|------|-------------|
-| `crawler.py` | 网页爬取核心（自动降级：快速提取→浏览器） | `Crawler.crawl_single()`, `Crawler.crawl_batch()` |
+| `crawler.py` | 网页爬取核心（自动降级：快速提取→Cloud→浏览器） | `Crawler.crawl_single()`, `Crawler.crawl_batch()`, `Crawler.crawl_cloud()` |
 | `searcher.py` | 搜索 + 内部快速提取（ddgs.extract，不作为 MCP 工具暴露） | `Searcher.search_text()`, `Searcher.extract_url()` |
+| `cloud.py` | Crawl4AI Cloud 兜底客户端（httpx，未配置 key 时不发起请求） | `cloud_scrape()`, `cloud_enabled()` |
+| `cache.py` | 抓取结果磁盘缓存（按 URL+参数，命中返回 `cached=true`） | `cache.get()`, `cache.put()`, `cache.clear()` |
+| `content.py` | 正文清洗、JS 壳识别、错误归类 | `clean_markdown()`, `looks_like_js_shell()`, `classify_error()` |
 | `llm_config.py` | LLM 配置管理 | `get_default_llm_config()`, `LLMConfig` |
 | `fastmcp_server.py` | MCP 服务器入口，注册所有工具 | `@mcp.tool` 装饰器 |
 | `cli.py` | `crawl` CLI 入口（argparse 薄壳，转发到 Crawler/Searcher） | `main()` |
@@ -62,11 +93,16 @@ uv run crawl search "关键词" -n 5          # 网页搜索
 `__init__.py` 用 PEP 562 懒导出。快速路径不得连带这些重依赖（有子进程测试锁定）。
 测试 mock 浏览器/LLM 类时 patch 源模块（如 `crawl4ai.AsyncWebCrawler`），不是 `crawl4ai_mcp.crawler.*`。
 
+**.env 加载**：`utils.load_env()` 只在进程入口（`cli.main()` / `fastmcp_server.main()`）调用，
+库用法和 pytest 不受影响。注意 `uv run` 会自动把 `.env` 注入环境变量，
+所以测试用 `tests/conftest.py` 的 autouse fixture 显式清除 `CRAWL4AI_API_KEY`，
+避免 Cloud 兜底在测试里意外生效。
+
 ### 异步处理模式
 
-**关键设计决策**：使用 `nest_asyncio` 实现嵌套事件循环兼容
+用 `nest_asyncio` 实现嵌套事件循环兼容：
 
-- `_run_async()` 辅助函数（在 `utils.py` 中统一提供）封装了异步调用
+- `utils.run_async()` 统一封装异步调用
 - 允许在已有事件循环的环境（如 Jupyter、某些测试框架）中运行
 - 底层爬取使用 `AsyncWebCrawler.arun()` 和 `arun_many()`
 - 快速提取路径（`ddgs.extract`）通过 `ThreadPoolExecutor` 并行化
@@ -85,29 +121,33 @@ uv run crawl search "关键词" -n 5          # 网页搜索
 2. **JSON 字符串**：`'{"instruction": "总结"}'`
 3. **纯文本**：`"总结页面内容"`（自动作为 `instruction`）
 
-**重要安全约束**：认证配置必须从环境变量读取，不允许用户传入。未配置 `CRAWL_MCP_API_KEY` 时传 `llm_config` 会优雅跳过并返回 `llm_skipped` 提示。
+**安全约束**：认证配置只从环境变量读取，不允许用户传入。未配置 `CRAWL_MCP_API_KEY` 时传 `llm_config` 会跳过并返回 `llm_skipped` 提示。
 
 ### 重试机制
 
-只对特定网络错误重试，最多 3 次，使用指数退避（1s、2s、4s）：
+浏览器路径只对特定网络错误重试，最多 3 次，使用指数退避（1s、2s、4s）：
 
 - `ERR_NETWORK_CHANGED`
 - `ERR_CONNECTION_RESET`
 - `ERR_INTERNET_DISCONNECTED`
 - `ERR_TIMED_OUT`
 
+搜索路径（`Searcher._search_wrapper`）失败时换后端再试一次：先用 ddgs 默认后端，
+失败后改用显式后端 `bing,yandex`。实测同一 query 重跑常常又能拿到，但换后端比原地
+重试有效（同一时刻 auto 后端 5/15 vs bing 10/15）。
+
 ### MCP 工具列表
 
 | 工具 | 功能 | 关键参数 |
 |------|------|----------|
-| `crawl_single` | 单个明确 URL 的正文提取（快速提取→浏览器 fallback） | `url`, `enhanced`, `llm_config`(实验性), `prefer_fast`, `min_content_length` |
-| `crawl_batch` | 多个明确 URL 的批量正文提取（并行快速提取，失败项浏览器 fallback） | `urls`, `concurrent`, `llm_config`(实验性), `llm_concurrent`, `prefer_fast`, `min_content_length` |
+| `crawl_single` | 单个明确 URL 的正文提取（快速提取→Cloud→浏览器） | `url`, `enhanced`, `llm_config`(实验性), `prefer_fast`, `min_content_length` |
+| `crawl_batch` | 多个明确 URL 的批量正文提取（并行快速提取，失败项继续降级） | `urls`, `concurrent`, `llm_config`(实验性), `llm_concurrent`, `prefer_fast`, `min_content_length` |
 | `crawl_site` | 从入口页递归发现并爬取站内页面（浏览器+BFS，不支持 LLM） | `url`, `depth`, `pages`, `concurrent` |
-| `search_text` | 通用网页搜索，只返回摘要和链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results` |
-| `search_news` | 新闻搜索，只返回摘要和来源链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results` |
-| `search_books` | 图书/电子书搜索 | `query`, `region`, `max_results` |
-| `search_videos` | 视频搜索 | `query`, `region`, `safesearch`, `timelimit`, `max_results` |
-| `search_images` | 图片搜索+下载+分析 | `query`, `region`, `safesearch`, `timelimit`, `download`, `analyze`, `analyze_concurrent` |
+| `search_text` | 通用网页搜索，只返回摘要和链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results`, `page`, `backend` |
+| `search_news` | 新闻搜索，只返回摘要和来源链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results`, `page`, `backend` |
+| `search_books` | 图书/电子书搜索 | `query`, `region`, `max_results`, `page`, `backend` |
+| `search_videos` | 视频搜索 | `query`, `region`, `safesearch`, `timelimit`, `max_results`, `page`, `backend`, `resolution`, `duration`, `license_videos` |
+| `search_images` | 图片搜索+下载+分析 | `query`, `region`, `safesearch`, `timelimit`, `max_results`, `size`, `color`, `type_image`, `layout`, `license_image`, `page`, `backend`, `download`, `analyze`, `analyze_concurrent` |
 
 选择规则：
 - 单个已知 URL：`crawl_single`
@@ -115,6 +155,11 @@ uv run crawl search "关键词" -n 5          # 网页搜索
 - 只有入口页、需要沿站内链接发现页面：`crawl_site`
 - 只需要找链接/素材，不需要正文：先用 `search_*`
 - `enhanced=True` 只影响浏览器路径；强制浏览器增强模式需同时设置 `prefer_fast=False`
+- `query` 原样透传给引擎，可用搜索引擎原生算子（`site:` / `filetype:` / `intitle:` / `"短语"` / `-排除`），
+  算子是否生效取决于实际命中的引擎，用 `backend` 指定
+- `backend` 留空 = auto（自动挑引擎），失败后按分类降级换池重试（见 `searcher.BACKEND_POOLS`）。
+  **池里的引擎名必须是 ddgs 实际注册的**（bing/google/yandex 在 ddgs 9.x 已被 `disabled=True`，
+  写进去会被静默丢弃并回退 auto），有测试锁定这一点
 
 ### 环境变量
 
@@ -124,8 +169,17 @@ uv run crawl search "关键词" -n 5          # 网页搜索
 | `CRAWL_MCP_BASE_URL` | API 基础 URL | 否 | `https://api.openai.com/v1` |
 | `CRAWL_MCP_TEXT_MODEL` | 文本模型名称 | 否 | `glm-4.7` |
 | `CRAWL_MCP_VISION_MODEL` | 图片分析模型名称 | 否 | `glm-4.6v` |
+| `CRAWL4AI_API_KEY` | Crawl4AI Cloud key（逗号分隔多个则轮询均摊），本地提取失败时的兜底爬取路径 | 否 | - |
+| `CRAWL4AI_CLOUD_FALLBACK` | `0` 关闭 Cloud 兜底 | 否 | `1` |
+| `CRAWL_MCP_CACHE` | `0` 关闭抓取缓存 | 否 | `1` |
+| `CRAWL_MCP_CACHE_TTL` | 正缓存有效期（秒） | 否 | `3600` |
+| `CRAWL_MCP_NEG_TTL` | 负缓存/域名记忆有效期（秒） | 否 | `300` |
+| `CRAWL_MCP_CACHE_DIR` | 缓存目录 | 否 | `~/.cache/crawl_mcp` |
+| `CRAWL4AI_CLOUD_BUDGET` | Cloud 兜底整段预算（秒），超时让位给浏览器 | 否 | `10` |
 
-> *不配置时所有爬取/搜索功能正常工作，仅 LLM 后处理和图片分析不可用。
+> *不配置 `CRAWL_MCP_API_KEY` 时所有爬取/搜索功能正常，仅 LLM 后处理和图片分析不可用。
+> 不配置 `CRAWL4AI_API_KEY` 时降级链路为「快速提取 → 浏览器」，不发外部请求，
+> `method` 不会出现 `cloud_fallback`。
 
 ### 响应格式约定
 
@@ -137,9 +191,20 @@ uv run crawl search "关键词" -n 5          # 网页搜索
     "title": str,
     "error": str | None,
     # prefer_fast=True 时可能出现；prefer_fast=False 纯浏览器路径可能不存在
-    "method": "fast_extract" | "browser_fallback",
-    # 仅 browser_fallback 时出现
+    "method": "fast_extract" | "cloud_fallback" | "browser_fallback" | "domain_memo",
+    # 仅发生降级时出现
     "fallback_reason": str,
+    # 失败原因归类（成功时为 None），取值见下
+    "error_code": str | None,
+    # 各阶段耗时（秒）；命中缓存时不返回
+    "timings": {"fast": 0.3, "cloud": 2.8, "browser": 26.4},
+    # 命中本地缓存（含负缓存）时为 True
+    "cached": bool,
+    # 缓存条目距今多少秒——数据可能是旧的
+    "cached_age": float,
+    # 失败时给出的下一步建议（换路径 / 换出口 / 修证书…）
+    "hint": str,
+    # 域名此前多次失败、直接给结论时，method 为 "domain_memo"
     # 可选 LLM 结果（仅当 llm_config + CRAWL_MCP_API_KEY 时出现）
     "llm_summary": str,  # 纯文本摘要
     "llm_data": dict,  # 结构化提取
@@ -148,6 +213,40 @@ uv run crawl search "关键词" -n 5          # 网页搜索
     "llm_skipped": str,  # 跳过原因说明
 }
 ```
+
+`error_code` 取值：`http_403` / `http_404` / `http_401` / `rate_limited` / `http_5xx` /
+`tls_error` / `js_challenge` / `antibot` / `empty_content` / `timeout` /
+`connection_refused` / `connection_reset` / `dns_error` / `no_results` / `unknown`。
+
+### 内容质量与降级判定
+
+快速提取拿到的不一定是正文，`content.py` 负责把关：
+
+- **JS 壳识别**：`looks_like_js_shell()` —— 内容 ≤800 字且开头 300 字内出现
+  "JavaScript is disabled" 一类提示时判为失败并降级（这类占位文本长度可能超过
+  `min_content_length`，只看长度会误判成功）
+- **正文清洗**：`clean_markdown()` —— 去掉链接定义块、短导航行、固定 boilerplate，
+  压缩连续空行；列表、表格、标题等正文结构原样保留
+- **错误归类**：`classify_error()` —— 把错误文本映射成稳定的 `error_code`，
+  让调用方能区分「换个方式有用」（`http_403`、`js_challenge`）和「重试也没用」
+  （`empty_content`、`http_404`）
+
+**降级策略（按错误类型决定还要不要继续降级）**：
+
+| 快速提取的错误 | 处置 | 理由 |
+|---|---|---|
+| `http_404` / `http_401` | 直接失败，不降级 | 换出口、换引擎都一样 |
+| `dns_error` / `connection_refused` | 试 Cloud，跳过浏览器 | Cloud 是云端出口；本地浏览器同一条网络 |
+| 其他（403 / 超时 / 内容不足…） | 走完整链路 fast → Cloud → 浏览器 | 还有救 |
+| JS 壳、空内容 | 走完整链路 | 浏览器可能渲染出来 |
+
+**缓存的三种条目**（`cache.py`，共用一套落盘机制，靠 namespace 区分）：
+
+- 正缓存 `crawl`：成功结果，TTL `CRAWL_MCP_CACHE_TTL`
+- 负缓存 `negative`：确定性失败（404/401/空内容）和短期粘性失败（挑战/反爬），
+  TTL `CRAWL_MCP_NEG_TTL`（默认 300s）——重试也没用，不必每次重走整条降级链路
+- 域名记忆 `domain`：同一域名连续 2 次确定性失败就记住结论，之后同域名直接返回，
+  `method="domain_memo"`；超时/限速这类波动不进域名记忆
 
 **站点爬取结果**（`crawl_site`）：
 ```python
@@ -186,12 +285,7 @@ uv run crawl search "关键词" -n 5          # 网页搜索
 ## 发布流程
 
 1. 更新 `pyproject.toml` 中的版本号
-2. 创建 git tag：`git tag v0.2.0 && git push --tags`
-3. GitHub Actions 会自动：
-   - 运行完整测试套件
-   - 检查代码格式
-   - 验证版本号匹配
-   - 构建分发包
-   - 发布到 PyPI
+2. 创建 git tag：`git tag v<version> && git push --tags`
+3. GitHub Actions 会自动：运行测试、检查格式、验证版本号匹配、构建分发包、发布到 PyPI
 
 或手动触发：GitHub → Actions → Publish to PyPI → Run workflow

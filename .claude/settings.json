@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && timeout 300 .venv/bin/python scripts/bench.py --if-changed || echo '[bench] 跳过'",
+            "timeout": 320
+          }
+        ]
+      }
+    ]
+  }
+}

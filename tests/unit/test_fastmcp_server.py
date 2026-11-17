@@ -126,10 +126,11 @@ class TestToolDescriptions:
         assert "不抓取全文" in _get_tool("search_news").description
 
     def test_search_images_description_lists_safesearch_and_timelimit(self):
-        desc = _get_tool("search_images").description
+        # FastMCP 把 docstring 的 Args 段拆进参数 schema，描述改查 schema
+        props = _get_tool("search_images").parameters["properties"]
 
-        assert "safesearch" in desc
-        assert "timelimit" in desc
+        assert props["safesearch"]["description"]
+        assert props["timelimit"]["description"]
 
 
 class TestCrawlToolFunctions:

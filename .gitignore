@@ -39,3 +39,6 @@ output/
 *.tmp
 *.bak
 .cache/
+
+# Benchmark 运行标记
+.bench-stamp

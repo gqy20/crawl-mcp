@@ -20,3 +20,10 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
+
+      - id: bench
+        name: bench
+        entry: bash -c 'timeout 300 .venv/bin/python scripts/bench.py --if-changed && git add docs/BENCHMARK.md docs/bench-history.jsonl || echo "[bench] 跳过：网络不可用或超时，文档保留上次结果"'
+        language: system
+        files: ^(src/.*\.py|scripts/bench\.py)$
+        pass_filenames: false

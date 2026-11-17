@@ -36,7 +36,7 @@ class TestLLMConfig:
         config = LLMConfig(api_key="sk-test")
         assert config.api_key == "sk-test"
         assert config.base_url == "https://api.openai.com/v1"
-        assert config.model == "gpt-4o-mini"
+        assert config.model == "glm-4.7"
         assert config.instruction == ""
         assert config.schema is None
 

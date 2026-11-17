@@ -10,6 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.2.1] - 2026-11-17
 
 ### Added
+- **Benchmark 机制**：`scripts/bench.py` 跑代表性渠道（政府政策、学术期刊、代码托管、
+  公众号）的完整降级链路和搜索查询，结果渲染到 `docs/BENCHMARK.md`，
+  明细追加到 `docs/bench-history.jsonl`
+  - `quick`（默认，7 个 URL + 5 个 query）/ `--full`（16 个 URL）/ `--no-cloud` / `--no-write`
+  - 文档自动更新：pre-commit hook（改 `src/**/*.py` 时重跑，源码未变则跳过，
+    结果随提交一起提交）+ Claude Code Stop hook（会话结束自动重跑）
+  - 网络不可用时保留上次结果，不阻塞提交
 - `crawl` CLI：终端/脚本直接爬取和搜索，复用 MCP 同一套核心
   - `crawl <url>` 单页 Markdown 到 stdout；多 URL 自动批量输出 JSON
   - `--browser` 强制浏览器、`--json` 完整结果、`crawl search <query>` 网页搜索
@@ -18,7 +25,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `crawl images <query> [--download]` 图片搜索/下载，下载项输出本地路径和大小，
     供多模态模型/CLI 直接查看（内置 analyze 保留在 MCP）
   - `--version` 版本输出；全命令支持 `--help`
+  - `--browser` 与 `--cloud` 互斥，避免两个强制模式同时传入时的歧义
   - 进度日志导到 stderr，stdout 纯净可接管道；失败退出码 1
+- **Crawl4AI Cloud 兜底路径**（可选）：本地快速提取失败或内容不足时，
+  若配置了 `CRAWL4AI_API_KEY`，先调 Cloud `/scrape`（~1-2s，云端自动选引擎），
+  成功即返回，失败继续走本地浏览器（~15-23s）
+  - 降级链路变为「快速提取 → Cloud 兜底 → 浏览器」
+  - 返回 `method="cloud_fallback"` 标记实际路径
+  - 批量场景命中限速（429）自动熔断，剩余项交回浏览器路径
+  - `CRAWL4AI_CLOUD_FALLBACK=0` 可关闭；未配置 key 时不发起 Cloud 调用，
+    降级链路保持「快速提取 → 浏览器」
+  - CLI 新增 `crawl --cloud <url>` 强制走 Cloud
+- **Cloud 多 key 轮换**：`CRAWL4AI_API_KEY` 支持逗号分隔多个 key，调用量按轮询均摊到各账号
+  （用于叠加多个账号的免费额度）；某个 key 额度耗尽（HTTP 402）或被限速（429）时
+  自动换下一个 key 重试，其他错误（如 404）不重试
+- `.env` 自动加载（`python-dotenv`）：进程入口（CLI / MCP 服务器）启动时加载，
+  已存在的环境变量优先不覆盖。`uv run` 本身也会注入 `.env`
+- **搜索后端可控**：`search_*` 全部暴露 `backend`（指定搜索引擎引擎，逗号分隔）和 `page`（翻页），
+  参数口径与 ddgs 自带 MCP server 一致
+  - `backend` 留空 = auto；调用方指定的引擎排最前，失败后再接内置降级池
+  - `search_images` 新增 `license_image`（授权过滤：public/share/sharecommercially 等）
+  - `search_videos` 新增 `resolution` / `duration` / `license_videos`
+  - `search_images` 改走统一搜索包装器，顺带获得引擎降级（原来没有）
+  - `crawl search` 加 `--backend` / `--page`，`crawl images` 加 `--backend` / `--page` / `--license-image`
+- **搜索算子说明**：工具描述里写清 `query` 原样透传给引擎，可用 `site:` / `filetype:` /
+  `intitle:` / `"精确短语"` / `-排除词` 等原生算子（是否生效取决于命中的引擎，可用 `backend` 指定）
 
 ### Changed
 - 重依赖懒加载：crawl4ai 改为浏览器/LLM 路径按需 import，openai 仅图片分析时 import，
@@ -29,9 +60,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pyproject.toml` 显式固定 ruff 规则集（`E4,E7,E9,F,C4`）：ruff 新版本默认规则变化
   会让 CI 行为漂移；dev 依赖钉 `ruff>=0.17.5,<0.18`
 - README 补充浏览器依赖说明：浏览器降级路径需先 `playwright install chromium`
+- 新增依赖：`httpx>=0.27.0`（Cloud 客户端）、`python-dotenv>=1.0.0`（.env 加载）
+
+### Added
+- **Benchmark 用例带预期**：`(渠道, URL, 预期)` 三元组，`成功` 要求正文 ≥200 字，
+  `失败·<error_code>` 是**已知问题站点的回归用例**（中科院空模板、网信办失效页）——
+  不要求跑通，只要求「失败得对」，`error_code` 变了就是判定逻辑退化
+- **Benchmark 表格加分段耗时**：`fast / cloud / browser` 三段各花多久，
+  一眼看出慢在降级链路哪一环；「较上次」改为只和同模式历史比
+
+### Added
+- **失败处置建议**：CLI 抓取失败时，除了原始错误还打印 `error_code` 对应的下一步建议
+  （如 `http_404` → 换入口页重新定位，`tls_error` → 查本机证书链，
+  `empty_content` → 重试无用换页面），错误不再只是一句看不懂的英文
+
+### Added
+- **降级按错误类型分流**：快速提取拿到 `http_404`/`http_401` 直接失败（换出口也没用），
+  拿到 `dns_error`/`connection_refused` 只试 Cloud、跳过浏览器（本地浏览器同一条网络，
+  干等也是白等）——实测网信办失效页 10.8s → 0.2s
+- **负缓存**：确定性失败（404/401/空内容）和短期粘性失败（挑战/反爬）也缓存，
+  TTL `CRAWL_MCP_NEG_TTL`（默认 300s），重试不必再走整条降级链路；超时/限速不缓存
+- **域名记忆**：同一域名连续 2 次确定性失败就记住结论，之后直接返回
+  （`method="domain_memo"`），不再为同一个域名耗时间
+- **失败建议 `hint`**：MCP 返回和 CLI 都给出「下一步该干嘛」
+  （换路径 / 换出口 / 修本机证书链 / 退避重试）
+- **缓存时效 `cached_age`**：命中缓存时返回条目距今多少秒，避免把旧数据当新的
+- **CLI `--quiet`**：不刷浏览器进度日志，管道场景更干净
+- `CRAWL4AI_CLOUD_BUDGET` 环境变量：Cloud 兜底整段预算可配（默认 10s）
+- **Benchmark 增强**：按渠道分组的表格 + 与上次逐行对比（标出变慢/变快）、
+  缓存命中小节（冷启动 vs 命中）、批量吞吐小节（`crawl_batch` 相对逐个抓的加速比）、
+  `--repeat` 重复搜索看命中率
+
+### Changed
+- **Cloud 兜底加整段预算（10s）**：降级链路里 Cloud 只是中间一环，后面还排着浏览器。
+  实测 Cloud 正常 1.6-5.5s，偶尔 20s+（排队/限速），干等会拖垮整体。
+  超出预算就让位给浏览器路径——实测国新办 28.4s→17.3s，SciDirect 35.4s→21.1s，
+  成功率不变（21/21）
+
+### Fixed
+- **`error_code` 把 JS 壳页误判成空内容**：crawl4ai 的
+  `script_heavy_shell` 现在归到 `js_challenge`（换浏览器/换路径有用），
+  而不是 `empty_content`（重试没用）——两者处置策略不同
+- **JS 壳误判成功**：快速提取偶尔只拿到 "JavaScript is disabled" 这类占位提示，
+  长度超过阈值会被当成正文返回。现在单独识别（内容 ≤800 字且提示语在开头 300 字内），
+  判为失败并继续降级
+- 搜索空结果：ddgs 默认后端不稳，同一 query 时常返回 "No results found."。
+  失败后不再原地重试，依次换后端池重试：先 `auto`，再按分类换显式引擎池
+  （文本 `brave,startpage` → `duckduckgo,mojeek` → `yahoo,wikipedia`；新闻 `duckduckgo,yahoo` → `bing`；
+  图片 `duckduckgo` → `bing`；视频 `duckduckgo`；图书 `annasarchive`）
+  - 池里的引擎名必须用 ddgs **实际注册**的：`bing` / `google` / `yandex` 在 ddgs 9.x
+    被标记 `disabled=True`，写进 backend 会被静默丢弃并回退 auto（等于没换引擎）。
+    新增测试拿 `ddgs.engines.ENGINES` 逐个核对池里的名字，上游再禁用引擎时立刻失败
+  - 相应把 `search_text` 30s → 45s，`search_news` / `search_books` / `search_videos` 20s → 30s
+- `LLMConfig.model` 默认值与实际生效的 `glm-4.7` 不一致，统一为 `glm-4.7`
+
+### Added
+- **抓取缓存**（`cache.py`）：成功抓取过的 URL 按 `URL + 参数` 缓存在本地，
+  重复抓取直接命中（实测 0.24s → 0.00s），命中时返回 `cached: true`
+  - 实测历史会话里 51% 的外部抓取是重复 URL，缓存能省掉这些请求，Cloud 计费场景下等于省额度
+  - `CRAWL_MCP_CACHE=0` 关闭，`CRAWL_MCP_CACHE_TTL` 调有效期，`CRAWL_MCP_CACHE_DIR` 换目录
+- **正文清洗**（`content.py`）：去掉链接定义块、短导航行、固定 boilerplate，压缩连续空行；
+  列表、表格、标题等正文结构原样保留
+- **分段耗时** `timings`：返回各降级阶段耗时，如 `{"fast": 0.3, "cloud": 2.8, "browser": 26.4}`
+- **错误归类** `error_code`：把错误文本映射成稳定取值（`http_403` / `js_challenge` /
+  `antibot` / `empty_content` / `tls_error` / `rate_limited` 等），
+  调用方可据此区分「换个方式有用」和「重试也没用」
+
+### Docs
+- README 重写：精简定位性表述，按爬取 / 搜索 / 可选分组工具表，
+  补 Cloud 兜底路径与性能数据
+- CLAUDE.md 同步架构说明：降级链路补上 Cloud 阶段，修正 `run_async()` 命名，
+  发布流程改为 `git tag v<version>`
+- CLI `--help` 打磨：根命令补子命令与示例，`-n/--max-results`、`--output-dir`
+  补默认值说明，参数帮助措辞与实际行为对齐
+- README 注明：快速提取路径拿不到 HTML `<title>`，`title` 可能为空
 
 ### Verified
-在以下依赖组合下跑通全部 170 个测试，并实测 MCP 服务器启动、浏览器降级、站内爬取、
+在以下依赖组合下跑通全部 288 个测试，并实测 MCP 服务器启动、浏览器降级、站内爬取、
 CLI 爬取/搜索/图片下载：
 - crawl4ai 0.9.5 / fastmcp 4.2.0 / ddgs 9.16.1 / playwright 1.65.2（当前最新）
 - crawl4ai 0.8.6 / fastmcp 3.4.2 / ddgs 9.14.1 / playwright 1.55.0（`pyproject.toml` 下限）

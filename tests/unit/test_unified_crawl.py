@@ -156,7 +156,7 @@ class TestFastExtractDecision:
         )
 
         assert decision.should_fallback is True
-        assert "insufficient content" in decision.fallback_reason
+        assert "内容不足" in decision.fallback_reason
         assert decision.should_enhance is False
 
     def test_spa_skeleton_fallbacks_with_enhanced(self):
@@ -262,10 +262,7 @@ class TestUnifiedCrawlSingleFallback:
             result = crawler.crawl_single("https://spa.example.com")
 
         assert result["method"] == "browser_fallback"
-        assert (
-            "insufficient" in result["fallback_reason"].lower()
-            or "short" in result["fallback_reason"].lower()
-        )
+        assert "内容不足" in result["fallback_reason"]
         mock_crawl.assert_called_once()
 
     @pytest.mark.asyncio

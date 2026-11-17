@@ -12,7 +12,9 @@
 import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from crawl4ai_mcp.searcher import Searcher
+from ddgs.exceptions import DDGSException
+
+from crawl4ai_mcp.searcher import BACKEND_POOLS, Searcher
 
 # ============================================================
 # 1. _search_wrapper — 核心搜索逻辑
@@ -66,6 +68,89 @@ class TestSearchWrapper:
         assert "error" in result
         assert result["results"] == []
         assert result["query"] == "fail"
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_transient_error_retried_once(self, mock_ddgs_class):
+        """瞬时异常重试一次后成功（ddgs 后端偶发空结果）"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.side_effect = [
+            DDGSException("No results found."),
+            iter([{"title": "T", "href": "https://t.com"}]),
+        ]
+
+        result = Searcher()._search_wrapper(lambda ddgs, **kw: ddgs.text(**kw), "q")
+
+        assert result["success"] is True
+        assert result["count"] == 1
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_retry_switches_backend(self, mock_ddgs_class):
+        """重试时换显式后端，而不是原地重复默认后端"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.side_effect = [
+            DDGSException("No results found."),
+            iter([{"title": "T"}]),
+        ]
+
+        Searcher()._search_wrapper(lambda ddgs, **kw: ddgs.text(**kw), "q")
+
+        first_call = mock_ddgs.text.call_args_list[0]
+        second_call = mock_ddgs.text.call_args_list[1]
+        assert "backend" not in first_call.kwargs
+        assert second_call.kwargs["backend"] == "brave,startpage"
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_third_attempt_uses_another_pool(self, mock_ddgs_class):
+        """前两个后端池都失败时，第三次换到另一个池"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.side_effect = [
+            DDGSException("No results found."),
+            DDGSException("No results found."),
+            iter([{"title": "T"}]),
+        ]
+
+        result = Searcher()._search_wrapper(lambda ddgs, **kw: ddgs.text(**kw), "q")
+
+        assert result["success"] is True
+        pools = [c.kwargs.get("backend") for c in mock_ddgs.text.call_args_list]
+        assert pools == [None, "brave,startpage", "duckduckgo,mojeek"]
+
+
+class TestBackendPools:
+    """降级池必须用 ddgs 真实注册的引擎名"""
+
+    def test_pool_engines_exist_in_ddgs_registry(self):
+        """池里的每个引擎都必须在 ddgs 注册表里，否则会被静默回退 auto"""
+        from ddgs.engines import ENGINES
+
+        for category, pools in BACKEND_POOLS.items():
+            registered = ENGINES[category]
+            for pool in pools:
+                if not pool:
+                    continue
+                for engine in pool.split(","):
+                    assert engine in registered, (
+                        f"{category} 降级池里的 '{engine}' 不在 ddgs 注册表 {sorted(registered)}，"
+                        "会被 ddgs 静默丢弃并回退 auto"
+                    )
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_user_backend_tried_first(self, mock_ddgs_class):
+        """调用方指定的引擎排最前"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.side_effect = DDGSException("No results found.")
+
+        Searcher()._search_wrapper(
+            lambda ddgs, **kw: ddgs.text(**kw), "q", backend="mojeek"
+        )
+
+        pools = [c.kwargs.get("backend") for c in mock_ddgs.text.call_args_list]
+        assert pools[0] == "mojeek"
+        assert "mojeek" not in pools[1:]  # 不重复试同一个引擎
 
 
 class TestSearchDelegation:
@@ -174,6 +259,7 @@ class TestSearchBooksVideos:
             "safesearch": "off",
             "timelimit": "w",
             "max_results": 7,
+            "page": 1,
         }
 
     @patch("crawl4ai_mcp.searcher.DDGS")
@@ -197,6 +283,7 @@ class TestSearchBooksVideos:
             "safesearch": "moderate",
             "timelimit": "d",
             "max_results": 3,
+            "page": 1,
         }
 
     @patch("crawl4ai_mcp.searcher.DDGS")
@@ -212,6 +299,7 @@ class TestSearchBooksVideos:
             "query": "python",
             "region": "uk-en",
             "max_results": 4,
+            "page": 1,
         }
 
     @patch("crawl4ai_mcp.searcher.DDGS")
@@ -235,6 +323,10 @@ class TestSearchBooksVideos:
             "safesearch": "on",
             "timelimit": "w",
             "max_results": 6,
+            "page": 1,
+            "resolution": None,
+            "duration": None,
+            "license_videos": None,
         }
 
 
@@ -312,6 +404,8 @@ class TestSearchImages:
             color="Red",
             type_image="photo",
             layout="Square",
+            license_image="public",
+            page=2,
         )
 
         kw = mock_ddgs.images.call_args[1]
@@ -324,6 +418,8 @@ class TestSearchImages:
         assert kw["color"] == "Red"
         assert kw["type_image"] == "photo"
         assert kw["layout"] == "Square"
+        assert kw["license_image"] == "public"
+        assert kw["page"] == 2
 
     @patch("crawl4ai_mcp.searcher.DDGS")
     @patch("crawl4ai_mcp.searcher.requests.get")

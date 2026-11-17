@@ -14,6 +14,24 @@ from ddgs import DDGS
 from .llm_config import get_default_llm_config
 from .utils import run_async
 
+# ddgs 9.16.1 里 bing / google / yandex 三个 text 引擎被标记了 disabled=True，
+# 它们不在实际注册表里。把它们写进 backend，ddgs 会当非法值丢弃并静默回退 auto
+# ——等于"换池重试"是假的，三轮全是 auto。
+# 所以降级池只能用库里真实注册的引擎名（见 ddgs.engines.ENGINES）。
+# 各分类的引擎集合不同，所以按分类给池；None 表示 auto（自动挑引擎）。
+BACKEND_POOLS: dict[str, tuple[str | None, ...]] = {
+    # text: brave, duckduckgo, grokipedia, mojeek, startpage, wikipedia, yahoo
+    "text": (None, "brave,startpage", "duckduckgo,mojeek", "yahoo,wikipedia"),
+    # news: bing, duckduckgo, yahoo
+    "news": (None, "duckduckgo,yahoo", "bing"),
+    # images: bing, duckduckgo
+    "images": (None, "duckduckgo", "bing"),
+    # videos: duckduckgo
+    "videos": (None, "duckduckgo"),
+    # books: annasarchive
+    "books": (None, "annasarchive"),
+}
+
 
 class Searcher:
     """搜索类 - 提供网页搜索功能"""
@@ -24,6 +42,7 @@ class Searcher:
         safesearch: str,
         timelimit: str | None,
         max_results: int,
+        page: int = 1,
     ) -> dict[str, Any]:
         """构造 DDGS 通用过滤参数。"""
         return {
@@ -31,33 +50,60 @@ class Searcher:
             "safesearch": safesearch,
             "timelimit": timelimit,
             "max_results": max_results,
+            "page": page,
         }
 
     @staticmethod
-    def _regional_search_params(region: str, max_results: int) -> dict[str, Any]:
+    def _regional_search_params(
+        region: str, max_results: int, page: int = 1
+    ) -> dict[str, Any]:
         """构造只支持区域和数量限制的 DDGS 参数。"""
-        return {"region": region, "max_results": max_results}
+        return {"region": region, "max_results": max_results, "page": page}
 
     def _search_wrapper(
-        self, search_fn: Callable, query: str, **kwargs
+        self,
+        search_fn: Callable,
+        query: str,
+        category: str = "text",
+        backend: str | None = None,
+        **kwargs,
     ) -> dict[str, Any]:
-        """通用搜索包装器，消除 search_text/search_news 的重复逻辑"""
-        try:
-            ddgs = DDGS()
-            results = list(search_fn(ddgs, query=query, **kwargs))
-            return {
-                "success": True,
-                "query": query,
-                "count": len(results),
-                "results": results,
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "query": query,
-                "error": str(e),
-                "results": [],
-            }
+        """通用搜索包装器，消除 search_text/search_news 的重复逻辑
+
+        先试调用方指定的 backend（若有），再依次换内置降级池重试——
+        同一 query 重跑常常又能拿到，但换后端比原地重试更有效。
+        """
+        first_error = ""
+        for b in self._backend_sequence(category, backend):
+            try:
+                ddgs = DDGS()
+                call_kwargs = dict(kwargs)
+                if b:
+                    call_kwargs["backend"] = b
+                results = list(search_fn(ddgs, query=query, **call_kwargs))
+                return {
+                    "success": True,
+                    "query": query,
+                    "count": len(results),
+                    "results": results,
+                }
+            except Exception as e:
+                if not first_error:
+                    first_error = str(e)
+        return {
+            "success": False,
+            "query": query,
+            "error": first_error,
+            "results": [],
+        }
+
+    @staticmethod
+    def _backend_sequence(category: str, backend: str | None) -> list[str | None]:
+        """调用方指定的引擎排最前，之后接该分类的内置降级池。"""
+        pools = BACKEND_POOLS.get(category, (None,))
+        sequence = [backend] if backend else []
+        sequence.extend(p for p in pools if p not in sequence)
+        return sequence
 
     def search_text(
         self,
@@ -66,12 +112,18 @@ class Searcher:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         max_results: int = 10,
+        page: int = 1,
+        backend: str | None = None,
     ) -> dict[str, Any]:
         """文本搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.text(**kw),
             query,
-            **self._filtered_search_params(region, safesearch, timelimit, max_results),
+            category="text",
+            backend=backend,
+            **self._filtered_search_params(
+                region, safesearch, timelimit, max_results, page
+            ),
         )
 
     def search_news(
@@ -81,12 +133,18 @@ class Searcher:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         max_results: int = 10,
+        page: int = 1,
+        backend: str | None = None,
     ) -> dict[str, Any]:
         """新闻搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.news(**kw),
             query,
-            **self._filtered_search_params(region, safesearch, timelimit, max_results),
+            category="news",
+            backend=backend,
+            **self._filtered_search_params(
+                region, safesearch, timelimit, max_results, page
+            ),
         )
 
     def extract_url(self, url: str, fmt: str = "text_markdown") -> dict[str, Any]:
@@ -119,12 +177,16 @@ class Searcher:
         query: str,
         region: str = "wt-wt",
         max_results: int = 10,
+        page: int = 1,
+        backend: str | None = None,
     ) -> dict[str, Any]:
         """图书搜索"""
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.books(**kw),
             query,
-            **self._regional_search_params(region, max_results),
+            category="books",
+            backend=backend,
+            **self._regional_search_params(region, max_results, page),
         )
 
     def search_videos(
@@ -134,12 +196,29 @@ class Searcher:
         safesearch: str = "moderate",
         timelimit: str | None = None,
         max_results: int = 10,
+        page: int = 1,
+        backend: str | None = None,
+        resolution: str | None = None,
+        duration: str | None = None,
+        license_videos: str | None = None,
     ) -> dict[str, Any]:
         """视频搜索"""
+        params = self._filtered_search_params(
+            region, safesearch, timelimit, max_results, page
+        )
+        params.update(
+            {
+                "resolution": resolution,
+                "duration": duration,
+                "license_videos": license_videos,
+            }
+        )
         return self._search_wrapper(
             lambda ddgs, **kw: ddgs.videos(**kw),
             query,
-            **self._filtered_search_params(region, safesearch, timelimit, max_results),
+            category="videos",
+            backend=backend,
+            **params,
         )
 
     def search_images(
@@ -153,6 +232,9 @@ class Searcher:
         color: str | None = None,
         type_image: str | None = None,
         layout: str | None = None,
+        license_image: str | None = None,
+        page: int = 1,
+        backend: str | None = None,
         download: bool = False,
         download_count: int | None = None,
         output_dir: str = "./downloads/images",
@@ -160,9 +242,9 @@ class Searcher:
         analysis_prompt: str = "详细描述这张图片的内容",
         analyze_concurrent: int = 3,
     ) -> dict[str, Any]:
-        """图片搜索 + 下载 + 分析（一站式）"""
+        """图片搜索，支持下载到本地和 AI 分析"""
         search_params = self._filtered_search_params(
-            region, safesearch, timelimit, max_results
+            region, safesearch, timelimit, max_results, page
         )
         search_params.update(
             {
@@ -170,18 +252,25 @@ class Searcher:
                 "color": color,
                 "type_image": type_image,
                 "layout": layout,
+                "license_image": license_image,
             }
         )
 
-        try:
-            images = list(DDGS().images(query=query, **search_params))
-        except Exception as e:
+        search = self._search_wrapper(
+            lambda ddgs, **kw: ddgs.images(**kw),
+            query,
+            category="images",
+            backend=backend,
+            **search_params,
+        )
+        if not search["success"]:
             return {
                 "success": False,
                 "query": query,
-                "error": f"搜索失败: {e}",
+                "error": f"搜索失败: {search.get('error')}",
             }
 
+        images = search["results"]
         result = {
             "success": True,
             "query": query,

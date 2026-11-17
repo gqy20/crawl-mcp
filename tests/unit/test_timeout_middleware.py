@@ -227,11 +227,12 @@ class TestTimeoutMiddlewareIntegration:
 
         # 基准测试实测 P95（秒），来自 bench_tools.py
         # v0.2.0: extract_url 已合并到 crawl_single，不再独立工具
+        # v0.2.1: 搜索失败自动重试一次，尾延迟翻倍，按重试后实测重新校准
         p95_bench = {
-            "search_text": 8.0,
-            "search_news": 2.7,
-            "search_books": 1.9,
-            "search_videos": 2.4,
+            "search_text": 14.0,
+            "search_news": 6.0,
+            "search_books": 8.0,
+            "search_videos": 3.0,
             "search_images": 2.9,
             "crawl_single": 17.0,
             "crawl_batch": 11.0,

@@ -34,10 +34,10 @@ class TestNativeToolTimeout:
         "crawl_single": 75,
         "crawl_site": 120,
         "crawl_batch": 180,
-        "search_text": 30,
-        "search_news": 20,
-        "search_books": 20,
-        "search_videos": 20,
+        "search_text": 45,
+        "search_news": 30,
+        "search_books": 30,
+        "search_videos": 30,
         "search_images": 30,
     }
 

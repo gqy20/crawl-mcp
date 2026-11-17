@@ -7,42 +7,35 @@
 
 ## 功能
 
-### 爬取工具
-- **crawl_single** - 单页爬取（**自动降级**：快速提取 → 浏览器渲染）
-- **crawl_site** - 递归爬取整个网站
-- **crawl_batch** - 批量爬取（**自动降级**，三阶段并行优化）
+**爬取** — 自动降级：快速提取 → 浏览器渲染
 
-### 搜索工具
-- **search_text** - 通用网页搜索
-- **search_news** - 新闻内容搜索
-- **search_images** - 图片搜索（支持下载和 AI 分析）
-- **search_books** - 图书/电子书搜索
-- **search_videos** - 视频搜索（含时长、播放量等）
+| 工具 | 用途 |
+|------|------|
+| `crawl_single` | 单个明确 URL 的正文提取 |
+| `crawl_batch` | 多个明确 URL 的并行提取 |
+| `crawl_site` | 从入口页递归爬取站内页面 |
 
-### 可选 AI 能力
-- **LLM 后处理**（实验性）- 对已爬取的 Markdown 进行 AI 摘要/结构化提取
-- **图片分析** - 使用视觉模型分析图片内容
+**搜索** — 基于 ddgs，只返回摘要和链接，不抓正文
 
-> **核心定位**：专业爬取工具。不配置 API Key 即可使用全部爬取和搜索功能。
+| 工具 | 用途 |
+|------|------|
+| `search_text` / `search_news` / `search_books` / `search_videos` | 网页 / 新闻 / 图书 / 视频搜索 |
+| `search_images` | 图片搜索，支持下载到本地和 AI 分析 |
+
+**可选** — 需要自备 API Key：`llm_config` LLM 后处理（实验性）、`search_images` 的 `analyze=true` 图片分析。
+
+不配置任何 Key 时，全部爬取和搜索工具照常可用。
 
 ## 性能
 
-`crawl_single` / `crawl_batch` 内置自动降级：静态页走快速路径（~0.5s），SPA 自动 fallback 到浏览器。
-
-| 场景 | 耗时 | 说明 |
+| 场景 | 耗时 | 路径 |
 |------|------|------|
-| crawl_single（静态博客） | **~0.5s** | 快速提取路径 |
-| crawl_single（SPA 网站） | ~0.6s + ~23s | 快速检测失败 → 浏览器降级 |
-| crawl_batch 10 页（全静态） | **~0.5s** | 并行快速提取 |
-| crawl_batch 10 页（混合） | ~24s | 静态页快速 + SPA 浏览器 |
-| search_text / news / books / videos | **~1.5-2s** | ddgs 搜索 |
-
-**关键优势**：
-- **无需手动选择工具**：`crawl_single` 自动判断用快速提取还是浏览器
-- 静态页面享受亚秒级速度，SPA 自动降级保证完整性
-- 批量爬取智能分流：静态 URL 并行快提取，失败项才走浏览器
-- 搜索类工具全部基于 ddgs，秒级响应
-- 无需配置任何 API Key 即可使用核心功能
+| 单页（静态） | **~0.5s** | 快速提取 |
+| 单页（SPA） | ~23s | 浏览器降级 |
+| 单页（SPA），配了 Cloud key | ~1.2s | Cloud 兜底 |
+| 10 页（全静态） | **~0.5s** | 并行快速提取 |
+| 10 页（混合） | ~24s | 静态页快速 + SPA 走浏览器 |
+| 各类搜索 | **~1.5-2s** | ddgs |
 
 ## 安装
 
@@ -50,46 +43,35 @@
 pip install crawl-mcp
 ```
 
-浏览器降级路径（SPA / 动态页）需要 Chromium 二进制，**首次使用浏览器功能前**装一次：
+浏览器降级路径（SPA / 动态页）需要 Chromium 二进制，首次使用前装一次：
 
 ```bash
 playwright install chromium   # 约 600MB，或用 crawl4ai-setup 一键安装
 ```
 
-只做搜索和静态页快速提取的话不需要浏览器，pip 装完即可用。
+只做搜索和静态页提取不需要浏览器。
 
 ## CLI 用法
 
-安装后附带 `crawl` 命令，与 MCP 工具共用同一套核心，适合终端、脚本和管道：
+安装后附带 `crawl` 命令，与 MCP 工具共用同一套核心：
 
 ```bash
 crawl https://example.com/article          # 单页，Markdown 打到 stdout
 crawl https://example.com/article > page.md
 crawl --json https://example.com/article   # 完整 JSON（含 title/method 等）
 crawl --browser https://spa-site.com       # 强制浏览器渲染
-crawl https://a.com https://b.com          # 多 URL 批量并行，输出 JSON
-crawl site https://docs.example.com --depth 1 --pages 5   # 站内递归爬取，输出 JSON
-crawl search "python argparse" -n 5        # 网页搜索（摘要+链接）
+crawl --cloud https://spa-site.com         # 强制走 Crawl4AI Cloud（需 CRAWL4AI_API_KEY）
+crawl https://a.com https://b.com          # 多 URL 并行，输出 JSON
+crawl site https://docs.example.com --depth 1 --pages 5   # 站内递归爬取
+crawl search "python argparse" -n 5        # 网页搜索
 crawl search --news "AI" -n 5              # 新闻搜索（--books / --videos 同理）
-crawl search "python argparse" --json
+crawl images "cat" --download              # 图片搜索并下载，输出本地路径
+crawl --quiet https://example.com          # 不刷浏览器进度日志（只留错误）
 ```
 
-退出码：成功 0，任一失败 1。进度日志走 stderr，stdout 只有正文/JSON，可放心接管道。
-静态页快速路径端到端约 1-2s（含进程启动）；`crawl-mcp` 命令仍用于启动 MCP 服务器。
+退出码：成功 0，任一失败 1。进度日志走 stderr，stdout 只有正文/JSON。`crawl-mcp` 命令仍用于启动 MCP 服务器。
 
 ## MCP 配置
-
-### 基础配置（推荐，无需 API Key）
-
-默认配置不需要任何 API Key。以下工具都可以直接使用：
-
-- `crawl_single` / `crawl_batch` / `crawl_site`
-- `search_text` / `search_news` / `search_books` / `search_videos` / `search_images`
-
-只有两类可选能力需要 API Key：
-
-- 传入 `llm_config` 做 LLM 后处理
-- 调用 `search_images` 且设置 `analyze=true` 做图片分析
 
 ```json
 {
@@ -102,9 +84,7 @@ crawl search "python argparse" --json
 }
 ```
 
-### 可选 AI 配置（仅在需要 LLM / 图片分析时）
-
-如果需要 `llm_config` 后处理或图片分析，再增加 `env`：
+需要 LLM 后处理或图片分析时，再加 `env`：
 
 ```json
 {
@@ -125,18 +105,54 @@ crawl search "python argparse" --json
 
 ### 环境变量
 
-| 变量 | 说明 | 必需 | 默认值 |
-|------|------|------|--------|
-| `CRAWL_MCP_API_KEY` | LLM 后处理 / 图片分析使用的 API 密钥 | 否 | - |
-| `CRAWL_MCP_BASE_URL` | OpenAI 兼容 API 基础 URL | 否 | `https://api.openai.com/v1` |
-| `CRAWL_MCP_TEXT_MODEL` | LLM 后处理模型名称 | 否 | `glm-4.7` |
-| `CRAWL_MCP_VISION_MODEL` | 图片分析模型名称 | 否 | `glm-4.6v` |
+| 变量 | 说明 | 默认值 |
+|------|------|--------|
+| `CRAWL_MCP_API_KEY` | LLM 后处理 / 图片分析使用的 API 密钥 | - |
+| `CRAWL_MCP_BASE_URL` | OpenAI 兼容 API 基础 URL | `https://api.openai.com/v1` |
+| `CRAWL_MCP_TEXT_MODEL` | LLM 后处理模型名称 | `glm-4.7` |
+| `CRAWL_MCP_VISION_MODEL` | 图片分析模型名称 | `glm-4.6v` |
+| `CRAWL4AI_API_KEY` | Crawl4AI Cloud key，本地提取失败时的兜底路径 | - |
+| `CRAWL4AI_CLOUD_FALLBACK` | 设为 `0` 关闭 Cloud 兜底 | `1` |
+| `CRAWL_MCP_CACHE` | 设为 `0` 关闭抓取缓存 | `1` |
+| `CRAWL_MCP_CACHE_TTL` | 正缓存有效期（秒） | `3600` |
+| `CRAWL_MCP_NEG_TTL` | 负缓存/域名记忆有效期（秒） | `300` |
+| `CRAWL_MCP_CACHE_DIR` | 缓存目录 | `~/.cache/crawl_mcp` |
+| `CRAWL4AI_CLOUD_BUDGET` | Cloud 兜底整段预算（秒），超时让位给浏览器 | `10` |
 
-不配置 `CRAWL_MCP_API_KEY` 时，所有爬取和搜索工具仍可正常使用。传入 `llm_config` 时会跳过 LLM 后处理并返回 `llm_skipped`；`search_images(analyze=true)` 会返回图片分析配置错误，但普通图片搜索和下载不受影响。
+未配置 `CRAWL_MCP_API_KEY` 时，传入 `llm_config` 会跳过 LLM 后处理并返回 `llm_skipped`，
+`search_images(analyze=true)` 会返回配置错误；普通爬取和搜索不受影响。
 
-## LLM 后处理（实验性功能）
+### 抓取缓存
 
-`crawl_single` 和 `crawl_batch` 支持可选的 `llm_config` 参数：
+成功抓取过的 URL 会按 `URL + 参数` 缓存在本地，重复抓取直接命中（实测 0.24s → 0.00s），
+命中时返回 `cached: true` 和 `cached_age`（缓存距今多少秒）。缓存能省掉重复请求，
+Cloud 计费场景下等于直接省额度。
+
+失败也会缓存，但只缓存「重试也没用」的那类（404、空内容、挑战页），TTL 更短
+（`CRAWL_MCP_NEG_TTL`，默认 300s）；超时、限速这类波动不缓存。同一个域名连续 2 次
+确定性失败后直接给出结论，不再走降级链路（`method="domain_memo"`）。
+
+```bash
+rm -rf ~/.cache/crawl_mcp   # 清空缓存
+```
+
+### Crawl4AI Cloud 兜底
+
+本地快速提取拿不到内容时默认降级到浏览器（~15-23s）。配了 `CRAWL4AI_API_KEY` 后会先尝试
+Cloud `/scrape`（~1-2s，云端自动选缓存或浏览器引擎），失败才继续走本地浏览器。返回的
+`method` 字段会标记为 `cloud_fallback`。
+
+- key 申请：https://api.crawl4ai.com/dashboard
+- 计费 0.05-0.5 credit/次（社区层每月赠 1000 credit），限速 10 请求/分钟
+- `CRAWL4AI_API_KEY` 支持逗号分隔多个 key，调用量轮询均摊；某个 key 额度耗尽（402）
+  或被限速（429）时自动换下一个
+- 不配 key 就不会调用 Cloud，行为与纯本地一致
+
+进程启动时（CLI / MCP 服务器）自动加载项目根目录的 `.env`，已存在的环境变量优先。
+
+## LLM 后处理（实验性）
+
+`crawl_single` 和 `crawl_batch` 支持可选的 `llm_config`：
 
 ```json
 {
@@ -152,15 +168,15 @@ crawl search "python argparse" --json
 ```
 
 - `instruction`: 提取指令
-- `schema`: 可选的 JSON Schema（用于结构化数据提取）
+- `schema`: 可选的 JSON Schema（结构化数据提取）
 
-**前提条件**：必须配置 `CRAWL_MCP_API_KEY`，否则会优雅跳过并在结果中返回 `llm_skipped` 提示。
+未配置 `CRAWL_MCP_API_KEY` 时会跳过并在结果中返回 `llm_skipped`。
 
 ## 工具用法
 
-### crawl_single - 单页爬取（自动降级）
+### crawl_single - 单页爬取
 
-已知一个明确 URL、需要提取页面正文 Markdown 时使用。内置「快速提取 → 浏览器渲染」自动降级策略：
+已知一个明确 URL、需要正文 Markdown 时使用。自动降级：快速提取 → 浏览器渲染。
 
 ```json
 {
@@ -171,13 +187,16 @@ crawl search "python argparse" --json
 }
 ```
 
-**返回示例**：
+返回：
+
 ```json
 {
   "success": true,
   "markdown": "# Article Title\n\nContent...",
   "title": "Article Title",
-  "method": "fast_extract"
+  "method": "fast_extract",
+  "error_code": null,
+  "timings": {"fast": 0.3}
 }
 ```
 
@@ -187,12 +206,23 @@ crawl search "python argparse" --json
 - `min_content_length`: 快速提取最小内容长度阈值（默认 200 字符）
 - `llm_config`: LLM 后处理配置（实验性，需 API Key）
 
-> 若要强制浏览器增强模式，请同时设置 `prefer_fast=false` 和 `enhanced=true`。
-> `fallback_reason` 仅在快速提取失败后进入浏览器 fallback 时返回。
+> 强制浏览器增强模式需同时设置 `prefer_fast=false` 和 `enhanced=true`。
+> `fallback_reason` 仅在发生降级时返回，说明快速提取失败或内容不足的原因。
+> 快速提取路径拿不到页面 HTML 的 `<title>`，`title` 可能为空；浏览器和 Cloud 路径有标题。
 
-### crawl_batch - 批量爬取多个明确 URL
+**字段说明**：
+- `error_code`: 失败原因的归类，调用方据此决定重试策略。取值：
+  `http_403` / `http_404` / `http_401` / `rate_limited` / `http_5xx` / `tls_error` /
+  `js_challenge` / `antibot` / `empty_content` / `timeout` / `connection_refused` /
+  `connection_reset` / `dns_error` / `no_results` / `unknown`；成功时为 `null`
+- `hint`: 失败时给出的下一步建议（换路径 / 换出口 / 修证书…）
+- `timings`: 各降级阶段的耗时（秒），如 `{"fast": 0.3, "cloud": 2.8, "browser": 26.4}`
+- `cached`: 命中本地缓存（含负缓存）时为 `true`，此时不返回 `timings`
+- `cached_age`: 缓存条目距今多少秒——数据可能是旧的，必要时用更短 TTL 重抓
 
-已知一组 URL、需要并行抓取多个页面时使用。它会先并行快速提取所有 URL，只把失败、内容不足或 SPA 骨架页送入浏览器 fallback。
+### crawl_batch - 批量爬取
+
+已知一组 URL 时使用。并行快速提取所有 URL，只把失败、内容不足或 SPA 骨架页送入后续降级。
 
 ```json
 {
@@ -214,11 +244,11 @@ crawl search "python argparse" --json
 - `llm_config`: LLM 后处理配置（实验性，需 API Key）
 - `llm_concurrent`: LLM 后处理并发数（默认 3）
 
-返回为结果列表。`method` 仅在 `prefer_fast=true` 的快速/降级路径中出现；`fallback_reason` 仅在单项发生浏览器 fallback 时出现。
+返回结果列表，每项结构同 `crawl_single`。
 
-### crawl_site - 从入口页递归爬站
+### crawl_site - 递归爬站
 
-只有一个网站入口、希望沿站内链接发现并抓取若干页面时使用。它使用浏览器和 BFS 深度策略，不走快速提取，也不支持 LLM 后处理。
+只有网站入口、希望沿站内链接发现并抓取若干页面时使用。走浏览器 + BFS，不走快速提取，也不支持 LLM 后处理。
 
 ```json
 {
@@ -237,11 +267,11 @@ crawl search "python argparse" --json
 - `pages`: 最大页面数（默认 10）
 - `concurrent`: 浏览器爬取并发数（默认 3）
 
-返回包含 `successful_pages`、`total_pages`、`success_rate` 和 `results`。
+返回 `successful_pages`、`total_pages`、`success_rate` 和 `results`。
 
-### search_text - 通用网页搜索
+### search_text - 网页搜索
 
-适用于搜索技术文档、百科、博客、论坛、教程等网页内容。搜索工具只返回摘要和链接，不抓取页面正文；如需正文，请对结果 URL 再调用 `crawl_single` 或 `crawl_batch`。
+搜索工具只返回摘要和链接，不抓页面正文；需要正文再对结果 URL 调 `crawl_single` 或 `crawl_batch`。
 
 ```json
 {
@@ -254,7 +284,8 @@ crawl search "python argparse" --json
 }
 ```
 
-**返回格式**：
+返回：
+
 ```json
 {
   "success": true,
@@ -267,8 +298,6 @@ crawl search "python argparse" --json
 ```
 
 ### search_images - 图片搜索
-
-搜索图片，支持下载到本地和 AI 分析。
 
 ```json
 {
@@ -284,7 +313,8 @@ crawl search "python argparse" --json
 }
 ```
 
-**返回格式**：
+返回：
+
 ```json
 {
   "success": true,
@@ -297,7 +327,7 @@ crawl search "python argparse" --json
 
 ### search_books / search_videos
 
-图书搜索和视频搜索，用法与 `search_text` 类似。返回字段由 ddgs 上游决定，通常包含标题、链接、摘要或媒体信息，具体字段会随来源变化。
+用法同 `search_text`。返回字段由 ddgs 上游决定，通常包含标题、链接、摘要或媒体信息，会随来源变化。
 
 ## 开发
 
@@ -307,25 +337,30 @@ uv run pytest
 uv run python -m crawl4ai_mcp.fastmcp_server --http
 ```
 
-## 发布
+### Benchmark
 
-当前准备发布版本：`0.2.0`
+`docs/BENCHMARK.md` 由 `scripts/bench.py` 自动生成，记录代表性渠道（政府政策、学术期刊、
+代码托管、公众号）的命中路径、耗时和搜索命中率。
 
-发布前检查：
-
-```bash
-uv run pytest tests/unit
-uv run ruff check .
-uv run ruff format --check .
-uv build
-```
-
-创建并推送 tag 后会触发 GitHub Actions 发布到 PyPI：
+用例带**预期**：`成功` 要求正文 ≥200 字，`失败·<error_code>` 是已知问题站点的回归用例
+——不要求跑通，只要求「失败得对」，`error_code` 变了就是判定逻辑退化。
 
 ```bash
-git tag v0.2.0
-git push origin v0.2.0
+uv run python scripts/bench.py            # quick：9 个用例 + 5 个 query，约 90s
+uv run python scripts/bench.py --full     # 完整数据集
+uv run python scripts/bench.py --repeat 3 # 每个搜索 query 跑 3 次，看命中率
+uv run python scripts/bench.py --no-write # 只打印，不写文件
 ```
+
+报告含四块：按渠道分组的爬取表（带 `fast/cloud/browser` 分段耗时和与上次的对比）、
+搜索命中率、缓存命中（冷启动 vs 命中）、批量吞吐（`crawl_batch` 相对逐个抓的加速比）。
+
+文档自动更新，改完代码不用手动维护：
+
+- 提交时 pre-commit hook 自动重跑（源码未变则跳过），结果写进本次提交
+- Claude Code 会话结束时同样自动重跑（`.claude/settings.json` 的 Stop hook）
+
+网络不可用时保留上次结果，不阻塞提交。
 
 ## 许可证
 

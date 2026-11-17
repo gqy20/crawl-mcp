@@ -24,10 +24,10 @@ mcp.add_middleware(
     TimeoutMiddleware(
         default_timeout=60,
         per_tool={
-            "search_text": 30,
-            "search_news": 20,
-            "search_books": 20,
-            "search_videos": 20,
+            "search_text": 45,
+            "search_news": 30,
+            "search_books": 30,
+            "search_videos": 30,
             "search_images": 30,
             "crawl_single": 75,
             "crawl_batch": 180,
@@ -73,7 +73,7 @@ def crawl_single(
             - 字典: {"instruction": "总结", "schema": {...}}
             - JSON 字符串: '{"instruction": "总结"}'
             - 纯文本: "总结页面内容"（自动作为 instruction）
-            未设置 API Key 时传此参数会优雅跳过，结果中包含 llm_skipped 提示。
+            未设置 API Key 时跳过，结果中包含 llm_skipped 提示。
         prefer_fast: 是否优先尝试快速提取（默认 True）。设为 False 时强制浏览器爬取。
         min_content_length: 快速提取结果的最小内容长度阈值（默认 200 字符）
 
@@ -83,10 +83,22 @@ def crawl_single(
             markdown: str,
             title: str,
             error: str | None,
-            method?: "fast_extract" | "browser_fallback",
-                # prefer_fast=True 时返回；prefer_fast=False 的纯浏览器路径可能不存在
+            method?: "fast_extract" | "cloud_fallback" | "browser_fallback"
+                    | "domain_memo",
+                # domain_memo 表示该域名此前多次失败，已直接给出结论，未再请求
             fallback_reason?: str,
-                # 仅浏览器 fallback 时返回，说明快速提取失败或内容不足的原因
+                # 仅发生降级时返回，说明快速提取失败或内容不足的原因
+            error_code?: str | None,
+                # 失败原因的归类（http_404 / js_challenge / antibot / empty_content /
+                # tls_error / rate_limited 等），据此决定重试还是换方式
+            hint?: str,
+                # 失败时给出的下一步建议（换路径 / 换出口 / 修证书…）
+            timings?: {fast: float, cloud: float, browser: float},
+                # 各降级阶段耗时（秒）；命中缓存时不返回
+            cached?: bool,
+                # 命中本地缓存（含负缓存）时为 true
+            cached_age?: float,
+                # 缓存条目距今多少秒——数据可能是旧的，必要时用更短 TTL 重抓
             llm_summary?/llm_data?/llm_skipped?/llm_error?: ...
                 # 仅传入 llm_config 时可能出现
         }
@@ -175,10 +187,11 @@ def crawl_batch(
                 markdown: str,
                 title: str,
                 error: str | None,
-                method?: "fast_extract" | "browser_fallback",
+                method?: "fast_extract" | "cloud_fallback" | "browser_fallback"
+                        | "domain_memo",
                     # prefer_fast=True 时可能出现
                 fallback_reason?: str,
-                    # 仅 browser_fallback 项出现
+                    # 仅发生降级的项出现
                 llm_summary?/llm_data?/llm_skipped?/llm_error?: ...
             },
             ...
@@ -195,13 +208,15 @@ def crawl_batch(
     return result
 
 
-@mcp.tool(timeout=30, tags={"search"})
+@mcp.tool(timeout=45, tags={"search"})
 def search_text(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
     timelimit: str | None = None,
     max_results: int = 10,
+    page: int = 1,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """
     搜索网页内容（通用搜索）
@@ -210,7 +225,11 @@ def search_text(
     只返回搜索结果摘要和链接，不抓取页面正文；如需正文，请对结果 URL 再调用 crawl_single/crawl_batch。
 
     Args:
-        query: 搜索关键词
+        query: 搜索关键词。支持搜索引擎原生算子（是否生效取决于命中的引擎，可用 backend 指定）：
+            site:example.com / -site:ads.com  限定或排除站点
+            filetype:pdf / ext:pdf  限定文件类型
+            intitle:"关键词"  标题匹配
+            "精确短语"  OR  -排除词
         region: 区域代码
             - wt-wt: 无区域限制（默认）
             - us-en: 美国（英语）
@@ -220,6 +239,13 @@ def search_text(
         safesearch: 安全搜索 (on/moderate/off)
         timelimit: 时间限制 (d=天, w=周, m=月, y=年)
         max_results: 最大结果数（默认：10）
+        page: 结果页码（默认：1），翻页取更多结果
+        backend: 指定搜索引擎引擎（逗号分隔），留空=auto 自动挑选。当前可用引擎：
+            - 文本: brave, duckduckgo, grokipedia, mojeek, startpage, wikipedia, yahoo
+            - 新闻: bing, duckduckgo, yahoo
+            - 图片: bing, duckduckgo
+            - 视频: duckduckgo
+            - 图书: annasarchive
 
     Returns:
         包含搜索结果的字典，格式：
@@ -233,16 +259,20 @@ def search_text(
             ]
         }
     """
-    return _searcher.search_text(query, region, safesearch, timelimit, max_results)
+    return _searcher.search_text(
+        query, region, safesearch, timelimit, max_results, page, backend
+    )
 
 
-@mcp.tool(timeout=20, tags={"search"})
+@mcp.tool(timeout=30, tags={"search"})
 def search_news(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
     timelimit: str | None = None,
     max_results: int = 10,
+    page: int = 1,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """
     搜索新闻内容
@@ -251,11 +281,13 @@ def search_news(
     只返回新闻搜索结果摘要和来源链接，不抓取全文；如需全文，请对结果 URL 再调用 crawl_single。
 
     Args:
-        query: 搜索关键词
+        query: 搜索关键词（算子用法同 search_text）
         region: 区域代码（同 search_text）
         safesearch: 安全搜索 (on/moderate/off)
         timelimit: 时间限制 (d=天, w=周, m=月)
         max_results: 最大结果数（默认：10）
+        page: 结果页码（默认：1）
+        backend: 搜索引擎引擎（逗号分隔，如 "duckduckgo,yahoo"），留空=auto（同 search_text）
 
     Returns:
         包含新闻搜索结果的字典，格式：
@@ -276,14 +308,18 @@ def search_news(
             ]
         }
     """
-    return _searcher.search_news(query, region, safesearch, timelimit, max_results)
+    return _searcher.search_news(
+        query, region, safesearch, timelimit, max_results, page, backend
+    )
 
 
-@mcp.tool(timeout=20, tags={"search"})
+@mcp.tool(timeout=30, tags={"search"})
 def search_books(
     query: str,
     region: str = "wt-wt",
     max_results: int = 10,
+    page: int = 1,
+    backend: str | None = None,
 ) -> dict[str, Any]:
     """
     搜索图书
@@ -294,21 +330,28 @@ def search_books(
         query: 搜索关键词
         region: 区域代码（同 search_text）
         max_results: 最大结果数（默认：10）
+        page: 结果页码（默认：1）
+        backend: 搜索引擎引擎（当前仅 annasarchive），留空=auto
 
     Returns:
         包含搜索结果的字典。results 的字段由 ddgs 返回，通常包含 title、url/href、body 等，
         具体字段会随来源变化。
     """
-    return _searcher.search_books(query, region, max_results)
+    return _searcher.search_books(query, region, max_results, page, backend)
 
 
-@mcp.tool(timeout=20, tags={"search"})
+@mcp.tool(timeout=30, tags={"search"})
 def search_videos(
     query: str,
     region: str = "wt-wt",
     safesearch: str = "moderate",
     timelimit: str | None = None,
     max_results: int = 10,
+    page: int = 1,
+    backend: str | None = None,
+    resolution: str | None = None,
+    duration: str | None = None,
+    license_videos: str | None = None,
 ) -> dict[str, Any]:
     """
     搜索视频
@@ -316,17 +359,33 @@ def search_videos(
     适用于查找教程视频、演示视频、课程录像等。
 
     Args:
-        query: 搜索关键词
+        query: 搜索关键词（算子用法同 search_text）
         region: 区域代码（同 search_text）
         safesearch: 安全搜索 (on/moderate/off)
         timelimit: 时间限制 (d=天, w=周)
         max_results: 最大结果数（默认：10）
+        page: 结果页码（默认：1）
+        backend: 搜索引擎引擎（当前仅 duckduckgo），留空=auto
+        resolution: 分辨率过滤 (high/standard)
+        duration: 时长过滤 (short/medium/long)
+        license_videos: 授权过滤 (creativeCommon/youtube)
 
     Returns:
         包含搜索结果的字典。results 的字段由 ddgs 返回，通常包含 title、url/content/duration 等，
         具体字段会随来源变化。
     """
-    return _searcher.search_videos(query, region, safesearch, timelimit, max_results)
+    return _searcher.search_videos(
+        query,
+        region,
+        safesearch,
+        timelimit,
+        max_results,
+        page,
+        backend,
+        resolution,
+        duration,
+        license_videos,
+    )
 
 
 @mcp.tool(timeout=30, tags={"search"})
@@ -340,6 +399,9 @@ def search_images(
     color: str | None = None,
     type_image: str | None = None,
     layout: str | None = None,
+    license_image: str | None = None,
+    page: int = 1,
+    backend: str | None = None,
     download: bool = False,
     download_count: int | None = None,
     output_dir: str = "./downloads/images",
@@ -350,53 +412,51 @@ def search_images(
     """
     搜索图片（支持下载和分析）
 
-    === 基础搜索 ===
-    query: 搜索关键词
-    max_results: 搜索结果数量（默认：10）
+    Args:
+        query: 搜索关键词
+        region: 区域代码 (wt-wt/us-en/cn-zh等)
+        safesearch: 安全搜索 (on/moderate/off)
+        timelimit: 时间限制 (d=天, w=周)
+        max_results: 搜索结果数量（默认：10）
+        size: 图片尺寸 (Small/Medium/Large/Wallpaper)
+        color: 颜色过滤 (如 "Red", "Monochrome")
+        type_image: 类型 (photo/clipart/gif/transparent/line)
+        layout: 布局 (Square/Tall/Wide)
+        license_image: 授权过滤 (any/public/share/sharecommercially/modify/modifycommercially)
+        page: 结果页码（默认：1）
+        backend: 搜索引擎引擎（逗号分隔，如 "duckduckgo"），留空=auto。
+            注意：非 duckduckgo 引擎不支持尺寸/颜色/布局/授权过滤
+        download: 是否下载到本地（默认：False）
+        download_count: 下载数量（默认：全部）
+        output_dir: 下载目录（默认：./downloads/images）
+        analyze: 是否使用图片模型分析（默认：False）
+        analysis_prompt: 分析提示词
+        analyze_concurrent: 图片分析并发数（默认：3）
 
-    === 搜索过滤 ===
-    region: 区域代码 (wt-wt/us-en/cn-zh等)
-    safesearch: 安全搜索 (on/moderate/off)
-    timelimit: 时间限制 (d=天, w=周)
-    size: 图片尺寸 (Small/Medium/Large/Wallpaper)
-    color: 颜色过滤 (如 "Red", "Monochrome")
-    type_image: 类型 (photo/clipart/gif/transparent/line)
-    layout: 布局 (Square/Tall/Wide)
-
-    === 下载选项 ===
-    download: 是否下载到本地（默认：False）
-    download_count: 下载数量（默认：全部）
-    output_dir: 下载目录（默认：./downloads/images）
-
-    === 分析选项 ===
-    analyze: 是否使用图片模型分析（默认：False）
-    analysis_prompt: 分析提示词
-    analyze_concurrent: 图片分析并发数（默认：3）
-
-    === 返回格式 ===
-    {
-        "success": True,
-        "query": "butterfly",
-        "search_results": {
-            "count": 10,
-            "results": [
-                {
-                    "title": "...",
-                    "image": "https://...",
-                    "thumbnail": "https://...",
-                    "width": 1920,
-                    "height": 1080,
-                    "source": "Bing"
-                },
-                ...
-            ]
-        },
-        "download_results": {          # 仅当 download=True 时
-            "total": 5,
-            "downloaded": 5,
-            "output_dir": "./downloads/images"
-        },
-        "analysis_results": {          # 仅当 analyze=True 时
+    Returns:
+        {
+            "success": True,
+            "query": "butterfly",
+            "search_results": {
+                "count": 10,
+                "results": [
+                    {
+                        "title": "...",
+                        "image": "https://...",
+                        "thumbnail": "https://...",
+                        "width": 1920,
+                        "height": 1080,
+                        "source": "Bing"
+                    },
+                    ...
+                ]
+            },
+            "download_results": {          # 仅当 download=True 时
+                "total": 5,
+                "downloaded": 5,
+                "output_dir": "./downloads/images"
+            },
+            "analysis_results": {          # 仅当 analyze=True 时
             "count": 5,
             "results": [
                 {
@@ -418,6 +478,9 @@ def search_images(
         color=color,
         type_image=type_image,
         layout=layout,
+        license_image=license_image,
+        page=page,
+        backend=backend,
         download=download,
         download_count=download_count,
         output_dir=output_dir,
@@ -430,6 +493,10 @@ def search_images(
 def main():
     """CLI 入口点"""
     import sys
+
+    from crawl4ai_mcp.utils import load_env
+
+    load_env()
 
     # 默认使用 STDIO，但支持通过参数指定 HTTP
     if "--http" in sys.argv:

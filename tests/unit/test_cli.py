@@ -10,8 +10,14 @@ import pytest
 from crawl4ai_mcp.cli import main
 
 
-def _result(success=True, markdown="# hello", error=None):
-    return {"success": success, "markdown": markdown, "title": "t", "error": error}
+def _result(success=True, markdown="# hello", error=None, **extra):
+    return {
+        "success": success,
+        "markdown": markdown,
+        "title": "t",
+        "error": error,
+        **extra,
+    }
 
 
 class TestCrawlCli:
@@ -32,6 +38,47 @@ class TestCrawlCli:
             assert main(["https://example.com"]) == 1
         assert "boom" in capsys.readouterr().err
 
+    def test_failure_prints_actionable_hint(self, capsys):
+        """失败时除了原始错误，还给出 error_code 对应的下一步建议"""
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls:
+            cls.return_value.crawl_single.return_value = _result(
+                success=False, markdown="", error="boom", error_code="http_404"
+            )
+            assert main(["https://example.com"]) == 1
+        err = capsys.readouterr().err
+        assert "boom" in err
+        assert "建议" in err
+        assert "失效" in err
+
+    def test_quiet_suppresses_progress_logs(self, capsys):
+        """--quiet 时浏览器进度日志不刷屏"""
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls:
+
+            def noisy(*a, **kw):
+                print("[INIT] crawl4ai 启动")
+                return _result()
+
+            cls.return_value.crawl_single.side_effect = noisy
+            assert main(["--quiet", "https://example.com"]) == 0
+
+        err = capsys.readouterr().err
+        assert "[INIT]" not in err
+
+    def test_progress_logs_go_to_stderr_by_default(self, capsys):
+        """默认进度日志走 stderr，stdout 只有正文"""
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls:
+
+            def noisy(*a, **kw):
+                print("[INIT] crawl4ai 启动")
+                return _result()
+
+            cls.return_value.crawl_single.side_effect = noisy
+            assert main(["https://example.com"]) == 0
+
+        captured = capsys.readouterr()
+        assert "[INIT]" in captured.err
+        assert "[INIT]" not in captured.out
+
     def test_browser_flag_skips_fast(self):
         with patch("crawl4ai_mcp.crawler.Crawler") as cls:
             cls.return_value.crawl_single.return_value = _result()
@@ -45,6 +92,11 @@ class TestCrawlCli:
             cls.return_value.crawl_single.return_value = _result()
             assert main(["--json", "https://example.com"]) == 0
         assert json.loads(capsys.readouterr().out)["markdown"] == "# hello"
+
+    def test_browser_and_cloud_mutually_exclusive(self):
+        with pytest.raises(SystemExit) as exc:
+            main(["--browser", "--cloud", "https://example.com"])
+        assert exc.value.code == 2
 
     def test_batch_outputs_json(self, capsys):
         urls = ["https://a.com", "https://b.com"]
@@ -72,7 +124,9 @@ class TestSearchCli:
                 "results": [{"title": "T", "href": "https://x.com", "body": "B"}],
             }
             assert main(["search", "q", "-n", "5"]) == 0
-            cls.return_value.search_text.assert_called_once_with("q", max_results=5)
+            cls.return_value.search_text.assert_called_once_with(
+                "q", max_results=5, page=1, backend=None
+            )
         out = capsys.readouterr().out
         assert "https://x.com" in out and "T" in out
 
@@ -99,7 +153,7 @@ class TestSearchCli:
                 }
                 assert main(["search", flag, "q", "-n", "3"]) == 0
                 getattr(cls.return_value, method).assert_called_once_with(
-                    "q", max_results=3
+                    "q", max_results=3, page=1, backend=None
                 )
 
     def test_search_news_uses_url_content_fields(self, capsys):
@@ -164,7 +218,13 @@ class TestImagesCli:
             cls.return_value.search_images.return_value = self._search_result()
             assert main(["images", "cat", "-n", "3"]) == 0
             cls.return_value.search_images.assert_called_once_with(
-                "cat", max_results=3, download=False, output_dir="./downloads/images"
+                "cat",
+                max_results=3,
+                page=1,
+                backend=None,
+                license_image=None,
+                download=False,
+                output_dir="./downloads/images",
             )
         assert capsys.readouterr().out.strip() == "https://x.com/a.jpg"
 
@@ -179,7 +239,13 @@ class TestImagesCli:
             cls.return_value.search_images.return_value = self._search_result(dr)
             assert main(["images", "cat", "--download", "--output-dir", "/tmp"]) == 0
             cls.return_value.search_images.assert_called_once_with(
-                "cat", max_results=10, download=True, output_dir="/tmp"
+                "cat",
+                max_results=10,
+                page=1,
+                backend=None,
+                license_image=None,
+                download=True,
+                output_dir="/tmp",
             )
         assert capsys.readouterr().out.strip() == "/tmp/a.jpg (2.4MB)"
 

@@ -1,10 +1,6 @@
 """LLM 配置模块 - 管理 LLM API 密钥和模型配置
 
-环境变量:
-    CRAWL_MCP_API_KEY:      API 密钥（可选，未配置则 LLM 功能自动禁用）
-    CRAWL_MCP_BASE_URL:     API 基础 URL（可选）
-    CRAWL_MCP_TEXT_MODEL:   文本模型名称（可选）
-    CRAWL_MCP_VISION_MODEL: 图片分析模型名称（可选）
+认证信息只从环境变量读取，不接受调用方传入。
 """
 
 import os
@@ -16,12 +12,12 @@ from typing import Any
 class LLMConfig:
     """LLM 配置类
 
-    支持兼容 OpenAI API 格式的各种服务商
+    面向 OpenAI 兼容接口的各种服务商
     """
 
     api_key: str
     base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-4o-mini"
+    model: str = "glm-4.7"
     instruction: str = ""
     schema: dict[str, Any] | None = None
     # 图片分析模型（可选）

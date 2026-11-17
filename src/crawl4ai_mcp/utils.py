@@ -17,3 +17,15 @@ def run_async(coro):
         return asyncio.get_event_loop().run_until_complete(coro)
     except RuntimeError:
         return asyncio.run(coro)
+
+
+def load_env() -> None:
+    """把 .env 载入环境变量（已存在的环境变量优先，不覆盖）
+
+    只在进程入口调用（CLI / MCP 服务器），不影响库用法和测试。
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(override=False)

@@ -338,6 +338,7 @@ def _auth(argv):
         # 临时把该文件作为全局登录态注入（CLI 是一次性进程，改 env 无妨）
         os.environ["CRAWL_MCP_STORAGE_STATE"] = str(path)
         from crawl4ai_mcp import cache
+        from crawl4ai_mcp.content import looks_like_login_page, looks_like_login_wall
         from crawl4ai_mcp.crawler import Crawler
 
         cache.clear()
@@ -345,7 +346,16 @@ def _auth(argv):
         result = Crawler().crawl_single(args.url, prefer_fast=False)
         code = result.get("error_code")
         if result.get("success"):
-            print(f"{args.name}: 有效 ✓ ({len(result.get('markdown') or '')} 字正文)")
+            md = result.get("markdown") or ""
+            title = result.get("title") or ""
+            # 渲染成功 ≠ 登录态有效：长登录页（GitHub 登录页上千字）字数过阈值，
+            # 短壳判定会漏，需按标题/登录表单特征再辨一次
+            if looks_like_login_page(md, title) or looks_like_login_wall(md):
+                print(
+                    f"{args.name}: 已失效（落到登录页）✗ —— 重新导入或重新导出 storage_state"
+                )
+                return 1
+            print(f"{args.name}: 有效 ✓ ({len(md)} 字正文)")
             return 0
         if code == "login_wall":
             print(f"{args.name}: 已失效（登录墙）✗ —— 重新导入或重新导出 storage_state")

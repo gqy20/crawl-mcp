@@ -89,6 +89,68 @@ def looks_like_login_wall(text: str) -> bool:
     )
 
 
+# ── 登录页（含长登录页）──────────────────────────────────────
+# looks_like_login_wall 只认 <600 字的短壳；GitHub/Vercel 这类登录页本身有
+# 上千字（表单 + 页脚），会被误判成"有效"。这里按"标题即登录页"或"正文是
+# 登录表单"识别，不限长度，供 auth check 判定登录态是否真的生效。
+
+# 标题以登录动词开头（\b 排除 "Signing in..." 这类帮助文章标题）
+_LOGIN_TITLE_HEAD_RE = re.compile(
+    r"^\s*(sign\s*in|log\s*in|signin|login|sign\s*up"
+    r"|create\s+(an?\s+)?account|登录|登入|注册)\b",
+    re.I,
+)
+# 标题以「分隔符 + 登录词」结尾（"知乎 - 登录" / "Vercel | Login"）；
+# 要求分隔符锚定，避免 "Guide to login" 这类文章标题误报
+_LOGIN_TITLE_TAIL_RE = re.compile(
+    r"[-–—·|]\s*(sign\s*in|log\s*in|signin|login|登录|登入)\s*$", re.I
+)
+
+# 登录表单强特征：正常文章极少同时出现两个以上
+_LOGIN_FORM_STRONG = (
+    "forgot password",
+    "forgot your password",
+    "忘记密码",
+    "重置密码",
+    "remember me",
+    "记住我",
+    "保持登录",
+    "username or email",
+    "email address",
+    "create an account",
+    "create account",
+    "没有账号",
+    "注册账号",
+)
+
+
+def looks_like_login_page(text: str, title: str = "") -> bool:
+    """页面是否是登录页（不限长度）。
+
+    两条独立判据，命中其一即可：
+      1. 标题即登录页——以 Sign in/Log in/登录 等开头，或以「分隔符+登录词」结尾。
+         最强、误报最低的信号（"Sign in to GitHub · GitHub" / "知乎 - 登录"）。
+      2. 正文是登录表单——强特征（忘记密码/记住我/用户名或邮箱/创建账号）≥2
+         且含密码+登录按钮；或强特征≥1 且密码+用户名/邮箱+登录按钮齐备。
+    正常长文即便导航里带"登录"也不会命中（标题不是登录页、表单强特征不足）。
+    """
+    t = (title or "").strip()
+    if t:
+        low_t = t.lower()
+        if _LOGIN_TITLE_HEAD_RE.match(low_t) or _LOGIN_TITLE_TAIL_RE.search(low_t):
+            return True
+    if not text:
+        return False
+    low = text.lower()
+    strong = sum(1 for m in _LOGIN_FORM_STRONG if m in low)
+    has_pwd = "password" in low or "密码" in low
+    has_id = "username" in low or "email" in low or "用户名" in low or "邮箱" in low
+    has_btn = "sign in" in low or "log in" in low or "登录" in low
+    if strong >= 2 and has_pwd and has_btn:
+        return True
+    return strong >= 1 and has_pwd and has_id and has_btn
+
+
 # ── 清洗 ──────────────────────────────────────────────────────
 
 # 链接定义块：[1]: https://example.com/... 或相对路径 [1]: page.html

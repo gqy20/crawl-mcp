@@ -226,6 +226,55 @@ class TestAuthCli:
             assert main(["auth", "check", "example", "--url", "https://x.com/me"]) == 1
         assert "失效" in capsys.readouterr().out
 
+    def test_check_long_login_page_reports_invalid(self, monkeypatch, tmp_path, capsys):
+        """长登录页（GitHub 登录页上千字）：success=True 且字数过阈值，
+        旧短壳判定会误报有效，新检测器按标题/表单特征判失效"""
+        d = tmp_path / "auth"
+        d.mkdir()
+        (d / "example.json").write_text(
+            '{"cookies": [], "origins": []}', encoding="utf-8"
+        )
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
+        login_md = (
+            "Sign in to GitHub\nUsername or email address\nPassword\n"
+            "Forgot password?\nSign in\nRemember me\n"
+            "New to GitHub? Create an account.\n" + "footer link " * 200
+        )
+        with (
+            patch("crawl4ai_mcp.crawler.Crawler") as cls,
+            patch("crawl4ai_mcp.cache.clear"),
+        ):
+            cls.return_value.crawl_single.return_value = _result(
+                markdown=login_md, title="Sign in to GitHub · GitHub"
+            )
+            assert main(["auth", "check", "example", "--url", "https://x.com/me"]) == 1
+        assert "失效" in capsys.readouterr().out
+
+    def test_check_valid_page_with_login_nav_not_flagged(
+        self, monkeypatch, tmp_path, capsys
+    ):
+        """正常长文导航里带"登录/注册"不应误判失效"""
+        d = tmp_path / "auth"
+        d.mkdir()
+        (d / "example.json").write_text(
+            '{"cookies": [], "origins": []}', encoding="utf-8"
+        )
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
+        md = (
+            "# 我的主页\n\n"
+            + "这是一段正常的正文内容。" * 100
+            + "\n\n导航：登录 注册\n"
+        )
+        with (
+            patch("crawl4ai_mcp.crawler.Crawler") as cls,
+            patch("crawl4ai_mcp.cache.clear"),
+        ):
+            cls.return_value.crawl_single.return_value = _result(
+                markdown=md, title="我的主页"
+            )
+            assert main(["auth", "check", "example", "--url", "https://x.com/me"]) == 0
+        assert "有效" in capsys.readouterr().out
+
 
 class TestSearchCli:
     def test_search_text_output(self, capsys):

@@ -4,6 +4,7 @@ from crawl4ai_mcp.content import (
     classify_error,
     clean_markdown,
     looks_like_js_shell,
+    looks_like_login_page,
     looks_like_login_wall,
     suggest_action,
 )
@@ -74,6 +75,57 @@ class TestLoginWall:
 
     def test_empty_text(self):
         assert looks_like_login_wall("") is False
+
+
+class TestLoginPage:
+    """长登录页识别（不限长度）：标题即登录页 / 正文是登录表单"""
+
+    def test_title_head_sign_in(self):
+        assert looks_like_login_page("", "Sign in to GitHub · GitHub") is True
+        assert looks_like_login_page("", "Log in to Vercel") is True
+        assert looks_like_login_page("", "Login") is True
+
+    def test_title_chinese(self):
+        assert looks_like_login_page("", "登录 - 知乎") is True
+        assert looks_like_login_page("", "知乎 - 登录") is True  # 分隔符+登录词结尾
+        assert looks_like_login_page("", "Vercel | Login") is True
+
+    def test_help_article_titles_not_flagged(self):
+        # \b / 分隔符锚定排除「关于登录的帮助文章」标题
+        assert looks_like_login_page("", "Signing in to your account - Help") is False
+        assert looks_like_login_page("", "How to log in to your account") is False
+        assert looks_like_login_page("", "Guide to login") is False
+        assert looks_like_login_page("", "Your profile") is False
+
+    def test_long_login_form_body(self):
+        # 标题中性，但正文是登录表单（强特征≥2 + 密码 + 登录按钮），长度超 600
+        md = (
+            "Username or email address\nPassword\nForgot password?\n"
+            "Sign in\nRemember me\nCreate an account.\n" + "footer " * 200
+        )
+        assert looks_like_login_page(md, "Account") is True
+        # 旧短壳判定对这种长登录页会漏
+        assert looks_like_login_wall(md) is False
+
+    def test_chinese_login_form_body(self):
+        md = "用户名\n密码\n忘记密码\n登录\n记住我\n" + "页脚链接 " * 200
+        assert looks_like_login_page(md, "账号") is True
+
+    def test_normal_long_article_not_flagged(self):
+        md = (
+            "# 我的主页\n\n"
+            + "这是一段正常的正文内容。" * 100
+            + "\n\n导航：登录 注册\n"
+        )
+        assert looks_like_login_page(md, "我的主页") is False
+
+    def test_password_article_without_form_markers_not_flagged(self):
+        # 含 password/email/sign in 但无登录表单强特征 → 不判登录页
+        md = "Learn about password security. Enter your email to sign in. " * 50
+        assert looks_like_login_page(md, "Password security guide") is False
+
+    def test_empty(self):
+        assert looks_like_login_page("", "") is False
 
 
 class TestClassifyLoginWall:

@@ -29,7 +29,7 @@ mcp.add_middleware(
             "search_books": 30,
             "search_videos": 30,
             "search_images": 30,
-            "crawl_single": 75,
+            "crawl_single": 120,
             "crawl_batch": 180,
             "crawl_site": 120,
         },
@@ -43,16 +43,19 @@ _searcher = Searcher()
 _crawler = Crawler(searcher=_searcher)
 
 
-@mcp.tool(timeout=75, tags={"crawl"})
+@mcp.tool(timeout=120, tags={"crawl"})
 def crawl_single(
     url: str,
     enhanced: bool = False,
     llm_config: dict[str, Any] | str | None = None,
     prefer_fast: bool = True,
     min_content_length: int = 200,
+    css_selector: str | None = None,
+    excluded_selector: str | None = None,
+    scan_full_page: bool = False,
 ) -> dict[str, Any]:
     """
-    爬取单个网页（自动降级：快速提取 → 浏览器渲染）
+    爬取单个网页（自动降级：快速提取 → Cloud 兜底 → 浏览器渲染）
 
     适用于已经知道一个明确 URL、需要提取该页面正文 Markdown 的场景。
     默认先尝试轻量级快速提取（适合静态文章/文档页），失败、内容过短或检测到 SPA 骨架页时
@@ -62,12 +65,18 @@ def crawl_single(
     参数组合：
     - 默认 prefer_fast=True：先快提取，必要时 fallback 到浏览器。
     - prefer_fast=False：跳过快速提取，强制直接使用浏览器。
-    - enhanced=True：只影响浏览器路径的等待时间；不会单独跳过快速提取。
-      如需强制浏览器增强模式，请同时设置 prefer_fast=False, enhanced=True。
+    - enhanced=True：只影响浏览器路径（不改变快速提取行为）——深度模式：
+      等正文实文本出现即返回（替代盲等，实测浏览器耗时砍半：BBC 20s→9s）+
+      PruningContentFilter 剪掉导航/boilerplate（实测导航行 32%→0.8%）+
+      随机 UA/拟人信号/删弹窗。代价是图片会被剪掉；要图片用 enhanced=False。
+      强制浏览器增强需同时设置 prefer_fast=False, enhanced=True。
+    - css_selector / excluded_selector / scan_full_page：只在浏览器路径生效
+      （快速提取成功时被忽略）。需要强制生效配合 prefer_fast=False。
 
     Args:
         url: 要爬取的网页 URL
-        enhanced: 浏览器增强模式。适用于 SPA/慢加载页面，等待时间更长；仅在浏览器路径生效。
+        enhanced: 浏览器增强模式：等渲染更久 + 正文剪枝（去导航/boilerplate，
+        但会剪掉图片）。适用于 SPA/慢加载页面；仅在浏览器路径生效。
         llm_config: [实验性] LLM 后处理配置（可选），需设置 CRAWL_MCP_API_KEY 才生效。
             支持三种格式:
             - 字典: {"instruction": "总结", "schema": {...}}
@@ -76,6 +85,12 @@ def crawl_single(
             未设置 API Key 时跳过，结果中包含 llm_skipped 提示。
         prefer_fast: 是否优先尝试快速提取（默认 True）。设为 False 时强制浏览器爬取。
         min_content_length: 快速提取结果的最小内容长度阈值（默认 200 字符）
+        css_selector: 只提取匹配元素内的正文，如 "article" / "#content" / "main"。
+            页面导航/侧栏/评论区噪声多时用；仅在浏览器路径生效。
+        excluded_selector: 排除匹配的元素（逗号分隔多个），如 "nav,footer,aside,.ads"。
+            仅在浏览器路径生效。
+        scan_full_page: 滚动加载整页后再提取（默认 False）。无限滚动/长列表页
+            （信息流、定价表）内容只在前几屏时设 True；仅在浏览器路径生效。
 
     Returns:
         {
@@ -89,8 +104,8 @@ def crawl_single(
             fallback_reason?: str,
                 # 仅发生降级时返回，说明快速提取失败或内容不足的原因
             error_code?: str | None,
-                # 失败原因的归类（http_404 / js_challenge / antibot / empty_content /
-                # tls_error / rate_limited 等），据此决定重试还是换方式
+                # 失败原因的归类（http_404 / js_challenge / antibot / login_wall /
+                # empty_content / tls_error / rate_limited 等），据此决定重试还是换方式
             hint?: str,
                 # 失败时给出的下一步建议（换路径 / 换出口 / 修证书…）
             timings?: {fast: float, cloud: float, browser: float},
@@ -104,7 +119,14 @@ def crawl_single(
         }
     """
     return _crawler.crawl_single(
-        url, enhanced, llm_config, prefer_fast, min_content_length
+        url,
+        enhanced,
+        llm_config,
+        prefer_fast,
+        min_content_length,
+        css_selector=css_selector,
+        excluded_selector=excluded_selector,
+        scan_full_page=scan_full_page,
     )
 
 
@@ -117,17 +139,18 @@ def crawl_site(
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """
-    从入口页开始递归爬取站内页面（浏览器 + BFS 深度爬取）
+    从入口页开始递归爬取站内页面（快速 BFS 优先，SPA 退回浏览器 BFS）
 
     适用于只有一个网站入口、希望沿站内链接抓取若干页面的场景。
-    与 crawl_batch 不同，本工具会从起始页发现链接；与 crawl_single/crawl_batch 不同，
-    本工具不走快速提取自动降级，也不支持 LLM 后处理。
+    与 crawl_batch 不同，本工具会从起始页发现链接：入口页快速提取成功时，
+    从 Markdown 提取站内链接、逐层交给 crawl_batch 爬取（每页自动降级）；
+    入口页需要浏览器渲染（SPA）或失败时，退回浏览器 BFS 深度爬取。不支持 LLM 后处理。
 
     Args:
         url: 起始 URL
         depth: 最大链接深度（默认 2）。数值越大，可能访问更多站内页面。
         pages: 最大页面数（默认 10）。用于限制递归爬取规模。
-        concurrent: 浏览器爬取并发数（默认 3）。
+        concurrent: 爬取并发数（默认 3）。
 
     Returns:
         {
@@ -158,6 +181,8 @@ def crawl_batch(
     llm_concurrent: int = 3,
     prefer_fast: bool = True,
     min_content_length: int = 200,
+    css_selector: str | None = None,
+    excluded_selector: str | None = None,
     ctx: Context | None = None,
 ) -> list[dict[str, Any]]:
     """
@@ -171,6 +196,7 @@ def crawl_batch(
     - prefer_fast=True：静态页走快速路径，失败项才走浏览器 fallback。
     - prefer_fast=False：所有 URL 都直接走浏览器，不返回 fast/fallback 方法标记。
     - min_content_length 只影响快速提取是否被认为足够完整。
+    - css_selector / excluded_selector 只在浏览器路径生效（快速提取成功时被忽略）。
 
     Args:
         urls: URL 列表
@@ -179,6 +205,10 @@ def crawl_batch(
         llm_concurrent: LLM 处理并发数（默认：3）
         prefer_fast: 是否优先尝试快速提取（默认 True）
         min_content_length: 快速提取最小内容长度阈值（默认 200 字符）
+        css_selector: 只提取匹配元素内的正文（如 "article"），适合一批同构页面；
+            仅在浏览器路径生效
+        excluded_selector: 排除匹配的元素（如 "nav,footer,aside"）；
+            仅在浏览器路径生效
 
     Returns:
         [
@@ -200,7 +230,14 @@ def crawl_batch(
     if ctx:
         ctx.info(f"开始批量爬取: {len(urls)} 个 URL (并发={concurrent})")
     result = _crawler.crawl_batch(
-        urls, concurrent, llm_config, llm_concurrent, prefer_fast, min_content_length
+        urls,
+        concurrent,
+        llm_config,
+        llm_concurrent,
+        prefer_fast,
+        min_content_length,
+        css_selector=css_selector,
+        excluded_selector=excluded_selector,
     )
     if ctx:
         success_count = sum(1 for r in result if r.get("success"))

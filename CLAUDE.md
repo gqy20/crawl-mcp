@@ -34,30 +34,42 @@ uv run crawl-mcp
 uv run crawl https://example.com          # 单页 Markdown 到 stdout
 uv run crawl search "关键词" -n 5          # 网页搜索
 
-# 跑基准测试，更新 docs/BENCHMARK.md（quick 约 90s）
+# 跑基准测试，更新 docs/BENCHMARK.md（quick：16 用例 + 2 站内 + 6 query，约 2 分钟）
 uv run python scripts/bench.py
 uv run python scripts/bench.py --full      # 完整数据集
 ```
 
 ### Benchmark 机制
 
-`scripts/bench.py` 跑一遍代表性渠道（政府政策、学术期刊、代码托管、公众号）的完整降级链路
-和搜索查询，把结果渲染成 `docs/BENCHMARK.md`，明细追加到 `docs/bench-history.jsonl`。
+`scripts/bench.py` 跑一遍代表性渠道（政府政策、学术期刊、代码托管、agent 工具文档、
+公众号）的完整降级链路和搜索查询，把结果渲染成 `docs/BENCHMARK.md`，
+明细追加到 `docs/bench-history.jsonl`。
 
-用例是三元组 `(渠道, URL, 预期)`：
+**用例数据集在 `scripts/bench.yml`**（加/改用例只动这个文件，不用碰 Python），
+加载成 `(渠道, URL, 预期, 关键内容)` 四元组：
 
-- `预期 = None` → 期望成功且正文 ≥200 字
-- `预期 = ("error", code)` → **已知问题站点的回归用例**，期望失败且 `error_code` 匹配。
-  这类用例（中科院空模板、网信办失效页）不是要跑通，而是要保证「失败得对」——
-  `error_code` 变了就是判定逻辑退化。quick 9 个用例，full 20 个。
+- `expect: null` → 期望成功且正文 ≥200 字；配 `expect_text: "短语"`
+  则正文还必须包含该短语（抓到了 ≠ 抓对了，借鉴 Firecrawl 数据集的 truth_text）
+- `expect: "http_404"`（或列表）→ **已知问题站点的回归用例**，期望失败且
+  `error_code` 匹配。这类用例（中科院空模板、网信办失效页、Hetzner 定价迁移）
+  不是要跑通，而是要保证「失败得对」——`error_code` 变了就是判定逻辑退化。
+  quick 16 个用例，full 51 个。数据集来源：~/.claude / ~/.codex 会话日志里
+  高频抓取的站点挖掘（agent 工具文档类占了日常爬取大头，全部理应 fast 秒开），
+  外加公开 benchmark（WCXB 七类页面、TRACE 九大类）点名的页面类型：
+  电商商品页、论坛（HN/SO）、新闻（BBC/NPR）、SaaS 营销页、招聘页、
+  视频页（Bilibili）、流媒体 JSON-LD（Spotify）、百科（Wikipedia/百度百科）、
+  财经（CoinMarketCap）、医疗（Mayo）、旅游（TripAdvisor）、云定价（AWS/Azure/GCP）、
+  开发者社区（dev.to）、文档平台（语雀）、AI 实验室（z.ai 登录墙）
+- `sites:` → 站内爬取用例（`crawl_site` 快速 BFS），成功页 ≥3 算符合预期
 
 表格里的 `分段耗时` 是 `fast / cloud / browser` 三段各花了多久，
 一眼看出慢在降级链路的哪一环。
 
 自动更新已接好两处，**改完代码不需要手动维护文档**：
 
-- **pre-commit hook**：改动 `src/**/*.py` 时自动重跑（源码指纹未变则跳过），
-  生成结果 `git add` 后随本次提交一起提交；网络不通时保留上次结果，不阻塞提交
+- **pre-commit hook**：改动 `src/**/*.py` 或 `scripts/bench.{py,yml}` 时自动重跑
+  （源码指纹未变则跳过），生成结果 `git add` 后随本次提交一起提交；
+  网络不通时保留上次结果，不阻塞提交
 - **Claude Code Stop hook**（`.claude/settings.json`）：会话结束时同样自动重跑
 
 `.bench-stamp` 存源码指纹（已 gitignore），用于判断是否需要重跑。
@@ -84,7 +96,8 @@ uv run python scripts/bench.py --full      # 完整数据集
 | `searcher.py` | 搜索 + 内部快速提取（ddgs.extract，不作为 MCP 工具暴露） | `Searcher.search_text()`, `Searcher.extract_url()` |
 | `cloud.py` | Crawl4AI Cloud 兜底客户端（httpx，未配置 key 时不发起请求） | `cloud_scrape()`, `cloud_enabled()` |
 | `cache.py` | 抓取结果磁盘缓存（按 URL+参数，命中返回 `cached=true`） | `cache.get()`, `cache.put()`, `cache.clear()` |
-| `content.py` | 正文清洗、JS 壳识别、错误归类 | `clean_markdown()`, `looks_like_js_shell()`, `classify_error()` |
+| `auth_store.py` | 登录态仓库（`~/.crawl_mcp/auth/` 每站点一个 storage_state，按 URL domain 匹配注入；从本地浏览器导入） | `import_from_browser()`, `list_auths()`, `merged_state_for()` |
+| `content.py` | 正文清洗、JS 壳/登录墙识别、错误归类 | `clean_markdown()`, `looks_like_js_shell()`, `looks_like_login_wall()`, `classify_error()` |
 | `llm_config.py` | LLM 配置管理 | `get_default_llm_config()`, `LLMConfig` |
 | `fastmcp_server.py` | MCP 服务器入口，注册所有工具 | `@mcp.tool` 装饰器 |
 | `cli.py` | `crawl` CLI 入口（argparse 薄壳，转发到 Crawler/Searcher） | `main()` |
@@ -132,17 +145,22 @@ uv run python scripts/bench.py --full      # 完整数据集
 - `ERR_INTERNET_DISCONNECTED`
 - `ERR_TIMED_OUT`
 
-搜索路径（`Searcher._search_wrapper`）失败时换后端再试一次：先用 ddgs 默认后端，
-失败后改用显式后端 `bing,yandex`。实测同一 query 重跑常常又能拿到，但换后端比原地
-重试有效（同一时刻 auto 后端 5/15 vs bing 10/15）。
+重试有总预算 `BROWSER_RETRY_BUDGET`（60s），页面超时 30s——整条链路
+（fast ~1s + Cloud ≤10s + 浏览器重试 ≤60s + 最后一次尝试 ≤45s）收在
+`crawl_single` 工具超时 120s 内。
+
+搜索路径（`Searcher._search_wrapper`）失败时按分类换后端池重试
+（`BACKEND_POOLS`，见下文工具列表）。单次引擎请求超时 `SEARCH_TIMEOUT`（8s），
+整条降级链总预算 `SEARCH_BUDGET`（25s）：第一轮必跑，之后每轮先看预算，
+超了就带着已有错误返回，不会拖过 MCP 工具超时（search_text 45s / 其余 30s）。
 
 ### MCP 工具列表
 
 | 工具 | 功能 | 关键参数 |
 |------|------|----------|
-| `crawl_single` | 单个明确 URL 的正文提取（快速提取→Cloud→浏览器） | `url`, `enhanced`, `llm_config`(实验性), `prefer_fast`, `min_content_length` |
-| `crawl_batch` | 多个明确 URL 的批量正文提取（并行快速提取，失败项继续降级） | `urls`, `concurrent`, `llm_config`(实验性), `llm_concurrent`, `prefer_fast`, `min_content_length` |
-| `crawl_site` | 从入口页递归发现并爬取站内页面（浏览器+BFS，不支持 LLM） | `url`, `depth`, `pages`, `concurrent` |
+| `crawl_single` | 单个明确 URL 的正文提取（快速提取→Cloud→浏览器） | `url`, `enhanced`, `llm_config`(实验性), `prefer_fast`, `min_content_length`, `css_selector`, `excluded_selector`, `scan_full_page` |
+| `crawl_batch` | 多个明确 URL 的批量正文提取（并行快速提取，失败项继续降级） | `urls`, `concurrent`, `llm_config`(实验性), `llm_concurrent`, `prefer_fast`, `min_content_length`, `css_selector`, `excluded_selector` |
+| `crawl_site` | 从入口页递归发现并爬取站内页面（快速 BFS 优先，SPA 退回浏览器 BFS，不支持 LLM） | `url`, `depth`, `pages`, `concurrent` |
 | `search_text` | 通用网页搜索，只返回摘要和链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results`, `page`, `backend` |
 | `search_news` | 新闻搜索，只返回摘要和来源链接 | `query`, `region`, `safesearch`, `timelimit`, `max_results`, `page`, `backend` |
 | `search_books` | 图书/电子书搜索 | `query`, `region`, `max_results`, `page`, `backend` |
@@ -155,6 +173,11 @@ uv run python scripts/bench.py --full      # 完整数据集
 - 只有入口页、需要沿站内链接发现页面：`crawl_site`
 - 只需要找链接/素材，不需要正文：先用 `search_*`
 - `enhanced=True` 只影响浏览器路径；强制浏览器增强模式需同时设置 `prefer_fast=False`
+- `css_selector` / `excluded_selector` / `scan_full_page` 同样只在浏览器路径生效
+  （快速提取不支持选择器，fast 成功时被忽略）。`css_selector` 指定正文区域
+  （如 `article`）、`excluded_selector` 排除噪声区域（如 `nav,footer,aside`，
+  实测 BBC 文章页链接 100→10）、`scan_full_page=True` 滚动加载整页
+  （无限滚动/长列表，实测 dev.to 首页 50k→111k 字）
 - `query` 原样透传给引擎，可用搜索引擎原生算子（`site:` / `filetype:` / `intitle:` / `"短语"` / `-排除`），
   算子是否生效取决于实际命中的引擎，用 `backend` 指定
 - `backend` 留空 = auto（自动挑引擎），失败后按分类降级换池重试（见 `searcher.BACKEND_POOLS`）。
@@ -176,6 +199,9 @@ uv run python scripts/bench.py --full      # 完整数据集
 | `CRAWL_MCP_NEG_TTL` | 负缓存/域名记忆有效期（秒） | 否 | `300` |
 | `CRAWL_MCP_CACHE_DIR` | 缓存目录 | 否 | `~/.cache/crawl_mcp` |
 | `CRAWL4AI_CLOUD_BUDGET` | Cloud 兜底整段预算（秒），超时让位给浏览器 | 否 | `10` |
+| `CRAWL_MCP_COOKIES` | 浏览器登录态 cookie（Playwright 格式 JSON 数组，如 `[{"name":"session","value":"...","domain":".example.com"}]`），所有浏览器路径自动携带；格式错只告警不阻断。登录墙站点的 `hint` 会指向它 | 否 | - |
+| `CRAWL_MCP_STORAGE_STATE` | Playwright storage_state 文件路径（完整登录态含 localStorage；`playwright codegen --save-storage` 登录一次导出），与 `CRAWL_MCP_COOKIES` 可同时配。不直接复用本地浏览器 profile（Playwright 起的是隔离临时实例） | 否 | - |
+| `CRAWL_MCP_AUTH_DIR` | 登录态目录（每站点一个 storage_state）。爬取时按 URL domain 自动匹配注入（不全局广播）；`crawl auth import --from chrome/firefox` 从本地浏览器解析导入（装了 `rookie-cookies` 包时优先用——Rust 核心、全平台：Windows 含 DPAPI/App-Bound v20、macOS 含 Keychain、Linux 含 KWallet；不装则仅 Linux（内置 sqlite 解析），Windows/macOS 直接提示安装；Chrome v10 固定 key 可解、v11 需解锁 keyring——**keyring 锁定时任何库都读不到**，桌面终端跑 `secret-tool search xdg:schema chrome_libsecret_os_crypt_password_v1` 触发解锁弹窗，或改用 codegen）、`list` 查看、`check <名称> --url` 真实探测。缓存键指纹含目录状态（文件增删改 → 缓存失效） | 否 | `~/.crawl_mcp/auth` |
 
 > *不配置 `CRAWL_MCP_API_KEY` 时所有爬取/搜索功能正常，仅 LLM 后处理和图片分析不可用。
 > 不配置 `CRAWL4AI_API_KEY` 时降级链路为「快速提取 → 浏览器」，不发外部请求，
@@ -214,8 +240,8 @@ uv run python scripts/bench.py --full      # 完整数据集
 }
 ```
 
-`error_code` 取值：`http_403` / `http_404` / `http_401` / `rate_limited` / `http_5xx` /
-`tls_error` / `js_challenge` / `antibot` / `empty_content` / `timeout` /
+`error_code` 取值：`http_402` / `http_403` / `http_404` / `http_401` / `rate_limited` / `http_5xx` /
+`tls_error` / `js_challenge` / `antibot` / `login_wall` / `empty_content` / `timeout` /
 `connection_refused` / `connection_reset` / `dns_error` / `no_results` / `unknown`。
 
 ### 内容质量与降级判定
@@ -225,7 +251,12 @@ uv run python scripts/bench.py --full      # 完整数据集
 - **JS 壳识别**：`looks_like_js_shell()` —— 内容 ≤800 字且开头 300 字内出现
   "JavaScript is disabled" 一类提示时判为失败并降级（这类占位文本长度可能超过
   `min_content_length`，只看长度会误判成功）
-- **正文清洗**：`clean_markdown()` —— 去掉链接定义块、短导航行、固定 boilerplate，
+- **登录墙/空状态壳识别**：`looks_like_login_wall()` —— AI 时代站点高发：
+  页面渲染成功、字数过阈值，但内容是未登录空状态（空画廊占位、登录引导）。
+  短内容（<600 字）+ 登录/UI 词密度高或带占位行（连续 "-"）时判为壳并降级
+  浏览器（z.ai 匿名首页实测 312 字壳 → 浏览器 1981 字正文）
+- **正文清洗**：`clean_markdown()` —— 引用式链接（`[文字][1]`+定义块，ddgs 默认输出）
+  先解析成内联链接，再去掉链接定义块、短导航行、固定 boilerplate，
   压缩连续空行；列表、表格、标题等正文结构原样保留
 - **错误归类**：`classify_error()` —— 把错误文本映射成稳定的 `error_code`，
   让调用方能区分「换个方式有用」（`http_403`、`js_challenge`）和「重试也没用」
@@ -238,15 +269,22 @@ uv run python scripts/bench.py --full      # 完整数据集
 | `http_404` / `http_401` | 直接失败，不降级 | 换出口、换引擎都一样 |
 | `dns_error` / `connection_refused` | 试 Cloud，跳过浏览器 | Cloud 是云端出口；本地浏览器同一条网络 |
 | 其他（403 / 超时 / 内容不足…） | 走完整链路 fast → Cloud → 浏览器 | 还有救 |
-| JS 壳、空内容 | 走完整链路 | 浏览器可能渲染出来 |
+| JS 壳、登录墙/空状态壳、空内容 | 走完整链路 | 浏览器可能渲染出来（z.ai 实测 312 字壳 → 1981 字正文） |
 
 **缓存的三种条目**（`cache.py`，共用一套落盘机制，靠 namespace 区分）：
 
 - 正缓存 `crawl`：成功结果，TTL `CRAWL_MCP_CACHE_TTL`
 - 负缓存 `negative`：确定性失败（404/401/空内容）和短期粘性失败（挑战/反爬），
   TTL `CRAWL_MCP_NEG_TTL`（默认 300s）——重试也没用，不必每次重走整条降级链路
-- 域名记忆 `domain`：同一域名连续 2 次确定性失败就记住结论，之后同域名直接返回，
-  `method="domain_memo"`；超时/限速这类波动不进域名记忆
+- 域名记忆 `domain`：同一域名连续 2 次**域名级**故障（`dns_error` / `connection_refused`）
+  就记住结论，之后同域名直接返回，`method="domain_memo"`。
+  404/空内容是**路径级**问题，只进按 URL 的负缓存，不污染域名
+  （否则 cas.cn/tzgg 的空模板会连累 cas.cn 首页）；超时/限速这类波动也不进
+
+缓存键含**登录态指纹**（`CRAWL_MCP_COOKIES`/`CRAWL_MCP_STORAGE_STATE` 的 hash，
+cookie 值不进键）：配好/更换登录态后同 URL 的旧正/负缓存立即失效，不会拿
+「配 cookie 前的失败负缓存」糊弄重试。登录墙在浏览器路径也有终检——带过期
+登录态渲染出的壳按 `error_code=login_wall` 失败，不假成功。
 
 **站点爬取结果**（`crawl_site`）：
 ```python

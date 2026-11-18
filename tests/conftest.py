@@ -30,3 +30,12 @@ def _isolate_cache(monkeypatch, tmp_path):
     """测试走独立缓存目录，避免读到开发者本地的缓存条目"""
     monkeypatch.setenv("CRAWL_MCP_CACHE", "0")
     monkeypatch.setenv("CRAWL_MCP_CACHE_DIR", str(tmp_path / "cache"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_auth_env(monkeypatch, tmp_path):
+    """测试不带开发者本地的登录态（_auth check 等代码路径会直接改 os.environ，
+    这里每个测试后统一还原，且登录态目录指向空目录）"""
+    monkeypatch.delenv("CRAWL_MCP_COOKIES", raising=False)
+    monkeypatch.delenv("CRAWL_MCP_STORAGE_STATE", raising=False)
+    monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(tmp_path / "no-auth"))

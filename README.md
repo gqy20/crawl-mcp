@@ -66,6 +66,10 @@ crawl site https://docs.example.com --depth 1 --pages 5   # 站内递归爬取
 crawl search "python argparse" -n 5        # 网页搜索
 crawl search --news "AI" -n 5              # 新闻搜索（--books / --videos 同理）
 crawl images "cat" --download              # 图片搜索并下载，输出本地路径
+crawl --css "article" --exclude-css "nav,footer" --browser <url>  # 正文区域控制
+crawl auth import --from chrome --site zhihu  # 从本地浏览器导入登录态
+crawl auth list                            # 查看所有已配置登录态
+crawl auth check zhihu.com --url <登录后页面>  # 真实探测登录态是否有效
 crawl --quiet https://example.com          # 不刷浏览器进度日志（只留错误）
 ```
 
@@ -118,6 +122,9 @@ crawl --quiet https://example.com          # 不刷浏览器进度日志（只�
 | `CRAWL_MCP_NEG_TTL` | 负缓存/域名记忆有效期（秒） | `300` |
 | `CRAWL_MCP_CACHE_DIR` | 缓存目录 | `~/.cache/crawl_mcp` |
 | `CRAWL4AI_CLOUD_BUDGET` | Cloud 兜底整段预算（秒），超时让位给浏览器 | `10` |
+| `CRAWL_MCP_COOKIES` | 浏览器登录态 cookie，Playwright 格式 JSON 数组（如 `[{"name":"session","value":"...","domain":".example.com"}]`）。所有浏览器路径自动携带，登录墙站点（`error_code=login_wall`）配它后重试；格式错只告警不阻断 | - |
+| `CRAWL_MCP_STORAGE_STATE` | Playwright storage_state 文件路径（完整登录态：cookies + localStorage）。导出：`uv run playwright codegen --save-storage=state.json https://站点/login`，弹出的浏览器里登录一次并关闭即保存。比手动搬 cookie 全（SPA 的 token 常在 localStorage），两者可同时配 | - |
+| `CRAWL_MCP_AUTH_DIR` | 登录态目录（默认 `~/.crawl_mcp/auth/`，每站点一个 storage_state 文件）。爬取时按 URL 的 domain **自动匹配注入**（爬 zhihu.com 只带 zhihu 的登录态，不全局广播）。`crawl auth import --from chrome/firefox` 可直接从本地已登录浏览器解析导入。**平台支持**：装了 `rookie-cookies`（`pip install rookie-cookies`）全平台可用——Windows 含 DPAPI/App-Bound v20（Chrome 127+ 默认加密）、macOS 含 Keychain；不装则仅 Linux（内置 sqlite 解析，Chrome v10/v11 + Firefox 明文），Windows/macOS 会提示安装；`crawl auth list` 查看、`crawl auth check <名称> --url <登录后页面>` 探测是否过期。目录内文件是明文登录态，注意权限 | `~/.crawl_mcp/auth` |
 
 未配置 `CRAWL_MCP_API_KEY` 时，传入 `llm_config` 会跳过 LLM 后处理并返回 `llm_skipped`，
 `search_images(analyze=true)` 会返回配置错误；普通爬取和搜索不受影响。
@@ -130,7 +137,8 @@ Cloud 计费场景下等于直接省额度。
 
 失败也会缓存，但只缓存「重试也没用」的那类（404、空内容、挑战页），TTL 更短
 （`CRAWL_MCP_NEG_TTL`，默认 300s）；超时、限速这类波动不缓存。同一个域名连续 2 次
-确定性失败后直接给出结论，不再走降级链路（`method="domain_memo"`）。
+域名级故障（DNS 解析失败、连接被拒）后直接给出结论，不再走降级链路
+（`method="domain_memo"`）；404/空内容只按 URL 缓存，不会连累同站其他页面。
 
 ```bash
 rm -rf ~/.cache/crawl_mcp   # 清空缓存
@@ -201,10 +209,19 @@ Cloud `/scrape`（~1-2s，云端自动选缓存或浏览器引擎），失败才
 ```
 
 **可选参数**：
-- `enhanced`: 浏览器增强模式，适用于 SPA/慢加载页面；只在浏览器路径生效
+- `enhanced`: 浏览器增强模式——等正文实文本出现即返回（不再盲等，浏览器耗时
+  砍半：BBC 20s→9s、百度百科 22s→8s）+ Pruning 剪枝去导航/boilerplate（BBC 导航
+  行 38%→0）+ 随机 UA/拟人信号/删弹窗；代价是图片被剪掉，要图片用
+  enhanced=false；只在浏览器路径生效
 - `prefer_fast`: 是否优先快速提取（默认 true，设 false 强制浏览器）
 - `min_content_length`: 快速提取最小内容长度阈值（默认 200 字符）
 - `llm_config`: LLM 后处理配置（实验性，需 API Key）
+- `css_selector`: 只提取匹配元素内的正文（如 `"article"` / `"#content"`），
+  页面导航/侧栏噪声多时用；只在浏览器路径生效，fast 成功时被忽略
+- `excluded_selector`: 排除匹配的元素（如 `"nav,footer,aside"`；实测 BBC 文章页
+  链接 100→10）；只在浏览器路径生效
+- `scan_full_page`: 滚动加载整页再提取，无限滚动/长列表页用（实测 dev.to 首页
+  50k→111k 字）；只在浏览器路径生效
 
 > 强制浏览器增强模式需同时设置 `prefer_fast=false` 和 `enhanced=true`。
 > `fallback_reason` 仅在发生降级时返回，说明快速提取失败或内容不足的原因。
@@ -212,7 +229,7 @@ Cloud `/scrape`（~1-2s，云端自动选缓存或浏览器引擎），失败才
 
 **字段说明**：
 - `error_code`: 失败原因的归类，调用方据此决定重试策略。取值：
-  `http_403` / `http_404` / `http_401` / `rate_limited` / `http_5xx` / `tls_error` /
+  `http_402` / `http_403` / `http_404` / `http_401` / `rate_limited` / `http_5xx` / `tls_error` /
   `js_challenge` / `antibot` / `empty_content` / `timeout` / `connection_refused` /
   `connection_reset` / `dns_error` / `no_results` / `unknown`；成功时为 `null`
 - `hint`: 失败时给出的下一步建议（换路径 / 换出口 / 修证书…）
@@ -243,12 +260,15 @@ Cloud `/scrape`（~1-2s，云端自动选缓存或浏览器引擎），失败才
 - `min_content_length`: 快速提取最小内容长度阈值（默认 200 字符）
 - `llm_config`: LLM 后处理配置（实验性，需 API Key）
 - `llm_concurrent`: LLM 后处理并发数（默认 3）
+- `css_selector` / `excluded_selector`: 正文区域指定/噪声区域排除，
+  适合一批同构页面（如全部是 `article` 结构）；只在浏览器路径生效
 
 返回结果列表，每项结构同 `crawl_single`。
 
 ### crawl_site - 递归爬站
 
-只有网站入口、希望沿站内链接发现并抓取若干页面时使用。走浏览器 + BFS，不走快速提取，也不支持 LLM 后处理。
+只有网站入口、希望沿站内链接发现并抓取若干页面时使用。入口页快速提取成功时走快速 BFS
+（从 Markdown 提站内链接，逐层批量爬取、每页自动降级）；入口页是 SPA 或失败时退回浏览器 BFS。不支持 LLM 后处理。
 
 ```json
 {
@@ -342,18 +362,24 @@ uv run python -m crawl4ai_mcp.fastmcp_server --http
 `docs/BENCHMARK.md` 由 `scripts/bench.py` 自动生成，记录代表性渠道（政府政策、学术期刊、
 代码托管、公众号）的命中路径、耗时和搜索命中率。
 
-用例带**预期**：`成功` 要求正文 ≥200 字，`失败·<error_code>` 是已知问题站点的回归用例
+用例带**预期**：`成功` 要求正文 ≥200 字，`成功·含关键内容` 还要求正文出现指定短语
+（`expect_text`，借鉴 Firecrawl 数据集的 truth_text——抓到了 ≠ 抓对了），
+`失败·<error_code>` 是已知问题站点的回归用例
 ——不要求跑通，只要求「失败得对」，`error_code` 变了就是判定逻辑退化。
+数据集在 `scripts/bench.yml`，加/改用例只动这个文件；页面类型对照公开
+benchmark（WCXB / TRACE）的网站池：学术、政府、代码、工具文档、电商、论坛、
+新闻、SaaS、招聘。
 
 ```bash
-uv run python scripts/bench.py            # quick：9 个用例 + 5 个 query，约 90s
+uv run python scripts/bench.py            # quick：16 用例 + 2 站内 + 6 query，约 2 分钟
 uv run python scripts/bench.py --full     # 完整数据集
 uv run python scripts/bench.py --repeat 3 # 每个搜索 query 跑 3 次，看命中率
 uv run python scripts/bench.py --no-write # 只打印，不写文件
 ```
 
-报告含四块：按渠道分组的爬取表（带 `fast/cloud/browser` 分段耗时和与上次的对比）、
-搜索命中率、缓存命中（冷启动 vs 命中）、批量吞吐（`crawl_batch` 相对逐个抓的加速比）。
+报告含五块：按渠道分组的爬取表（带 `fast/cloud/browser` 分段耗时和与上次的对比）、
+搜索命中率、缓存命中（冷启动 vs 命中）、批量吞吐（`crawl_batch` 相对逐个抓的加速比）、
+站内爬取（`crawl_site` 快速 BFS 的收页数和耗时）。
 
 文档自动更新，改完代码不用手动维护：
 

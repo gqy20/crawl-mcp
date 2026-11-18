@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import concurrent.futures
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,12 @@ BACKEND_POOLS: dict[str, tuple[str | None, ...]] = {
     # books: annasarchive
     "books": (None, "annasarchive"),
 }
+
+#: 单次引擎请求超时（秒）。ddgs 默认 5s，放宽到 8s 减少慢引擎误杀
+SEARCH_TIMEOUT = 8
+#: 整条降级链的总预算（秒）：池子最多 4 轮，不设总闸最坏能拖到 2 分钟，
+#: 超过 MCP 工具超时（search_text 45s / 其余 30s）
+SEARCH_BUDGET = 25
 
 
 class Searcher:
@@ -74,13 +81,19 @@ class Searcher:
         同一 query 重跑常常又能拿到，但换后端比原地重试更有效。
         """
         first_error = ""
-        for b in self._backend_sequence(category, backend):
+        deadline = time.monotonic() + SEARCH_BUDGET
+        for n, b in enumerate(self._backend_sequence(category, backend)):
+            # 第一轮必跑；之后每轮先看总预算，超了就带着已有错误返回
+            if n and time.monotonic() >= deadline:
+                break
             try:
-                ddgs = DDGS()
+                ddgs = DDGS(timeout=SEARCH_TIMEOUT)
                 call_kwargs = dict(kwargs)
                 if b:
                     call_kwargs["backend"] = b
-                results = list(search_fn(ddgs, query=query, **call_kwargs))
+                results = self._dedupe(
+                    list(search_fn(ddgs, query=query, **call_kwargs))
+                )
                 return {
                     "success": True,
                     "query": query,
@@ -96,6 +109,20 @@ class Searcher:
             "error": first_error,
             "results": [],
         }
+
+    @staticmethod
+    def _dedupe(results: list[dict]) -> list[dict]:
+        """按链接去重（ddgs 偶尔返回重复 href），保持原顺序；无链接的条目原样保留"""
+        seen: set[str] = set()
+        out = []
+        for r in results:
+            key = r.get("href") or r.get("url") or r.get("image")
+            if key:
+                if key in seen:
+                    continue
+                seen.add(key)
+            out.append(r)
+        return out
 
     @staticmethod
     def _backend_sequence(category: str, backend: str | None) -> list[str | None]:
@@ -158,7 +185,7 @@ class Searcher:
             fmt: 输出格式 (text_markdown / text_plain / text_rich / text / content)
         """
         try:
-            result = DDGS().extract(url, fmt=fmt)
+            result = DDGS(timeout=SEARCH_TIMEOUT).extract(url, fmt=fmt)
             return {
                 "success": True,
                 "url": result.get("url", url),

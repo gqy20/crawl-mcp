@@ -27,94 +27,55 @@ STAMP = ROOT / ".bench-stamp"
 
 # ── 数据集 ────────────────────────────────────────────────
 #
-# 每个用例是 (渠道, URL, 预期)：
+# 用例写在 scripts/bench.yml（改数据不动代码），加载成
+# (渠道, URL, 预期, 关键内容) 四元组：
 #   预期为 None            → 期望成功，正文 ≥ MIN_CHARS 字
 #   预期为 ("error", code) → 期望失败，且 error_code 等于 code
 #                             （已知问题站点的回归用例，防止判定逻辑退化）
+#   关键内容非空           → 成功时正文必须包含这些短语（借鉴 Firecrawl
+#                             数据集的 truth_text 思路：抓到了 ≠ 抓对了）
 #
-# 后两类「已知问题」用例是从 ~/.claude 历史会话里真实抓不到的站点，
-# 它们不是要跑通，而是要保证「失败得对」——error_code 变了就是回归。
+# 「已知问题」用例不是要跑通，而是要保证「失败得对」——error_code 变了就是回归。
 
 MIN_CHARS = 200
 
-QUICK_CASES = [
-    (
-        "政府-国务院政策",
-        "https://www.gov.cn/zhengce/zhengceku/202307/content_6891752.htm",
-        None,
-    ),
-    ("政府-上海政务", "https://www.shanghai.gov.cn/nw12344/index.html", None),
-    ("标准-TC260", "https://www.tc260.org.cn/front/bzzqyjList.html", None),
-    ("学术-PLOS", "https://dx.plos.org/10.1371/journal.pgen.1003905", None),
-    ("学术-PubMed", "https://pubmed.ncbi.nlm.nih.gov/38988617/", None),
-    ("学术-Wiley", "https://onlinelibrary.wiley.com/doi/10.1111/mec.70167", None),
-    (
-        "代码-GitHub raw",
-        "https://raw.githubusercontent.com/langchain-ai/deepagents/main/README.md",
-        None,
-    ),
-    (
-        "已知问题-中科院空模板",
-        "https://www.cas.cn/tzgg/",
-        ("error", "empty_content"),
-    ),
-    (
-        # 快速提取直接拿到 HTTP 404 → 终止错误，跳过整条降级链路
-        "已知问题-网信办失效页",
-        "https://www.cac.gov.cn/xxgk/",
-        ("error", ("http_404", "js_challenge")),
-    ),
-]
+DATASET = Path(__file__).parent / "bench.yml"
 
-FULL_CASES = QUICK_CASES + [
-    ("学术-EuropePMC", "https://europepmc.org/article/MED/12939634", None),
-    (
-        "学术-SciDirect",
-        "https://www.sciencedirect.com/science/article/pii/S1055790306003241",
-        None,
-    ),
-    ("学术-biorxiv", "https://www.biorxiv.org/", None),
-    (
-        "学术-DOI 元数据",
-        "https://api.crossref.org/works/10.1093/bioinformatics/btab468",
-        None,
-    ),
-    ("学术-DOI 跳转", "https://doi.org/10.1093/bioinformatics/btab468", None),
-    ("政府-国新办", "https://www.scio.gov.cn/zhixing/", None),
-    ("政府-中科院首页", "https://www.cas.cn/", None),
-    (
-        "政府-网信办栏目",
-        "https://www.cac.gov.cn/yaowen/wxyw/A093602index_1.htm",
-        None,
-    ),
-    (
-        "JS 壳-Springer",
-        "https://link.springer.com/protocol/10.1007/978-1-0716-1134-0_11",
-        None,
-    ),
-    (
-        "代码-GitHub API",
-        "https://api.github.com/repos/langchain-ai/deepagents/contents",
-        None,
-    ),
-    (
-        "代码-GitHub docs",
-        "https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions",
-        None,
-    ),
-    ("公众号", "https://mp.weixin.qq.com/s/JLTAxHjqlkpGbfOcDWDAvw", None),
-]
 
-QUERIES = [
-    ("政策-中文", "生成式人工智能 管理办法 网信办", "cn-zh"),
-    ("政策-通用", "政策文件 规范性文件 发布", "cn-zh"),
-    ("学术-中文", "锥栗 花期 物候 中国", "cn-zh"),
-    ("学术-英文", "Castanea henryi flowering time", "wt-wt"),
-    ("工具-英文", "deepagents OpenShell sandbox backend", "wt-wt"),
-]
+def _load_dataset() -> tuple[list, list, list, list]:
+    import yaml
+
+    data = yaml.safe_load(DATASET.read_text(encoding="utf-8"))
+
+    def case(d: dict) -> tuple:
+        expect = d.get("expect")
+        text = d.get("expect_text")
+        texts = (text,) if isinstance(text, str) else tuple(text or ())
+        if expect is None:
+            expect_parsed = None
+        else:
+            codes = tuple(expect) if isinstance(expect, list) else (expect,)
+            expect_parsed = ("error", codes)
+        return (d["group"], d["url"], expect_parsed, texts)
+
+    quick = [case(d) for d in data["quick"]]
+    full = quick + [case(d) for d in data.get("full_extra", [])]
+    queries = [
+        (q["kind"], q["query"], q.get("region", "wt-wt")) for q in data["queries"]
+    ]
+    sites = [
+        (d["group"], d["url"], d.get("depth", 1), d.get("pages", 5))
+        for d in data.get("sites", [])
+    ]
+    return quick, full, queries, sites
+
+
+QUICK_CASES, FULL_CASES, QUERIES, SITES = _load_dataset()
 
 
 # ── 采集 ──────────────────────────────────────────────────
+
+SITE_MIN_OK = 3  # crawl_site 用例成功页低于这个数算退化
 
 
 def _versions() -> dict[str, str]:
@@ -131,21 +92,22 @@ def _versions() -> dict[str, str]:
 
 
 def run_crawls(
-    cases: list[tuple[str, str, tuple | None]], label: str = ""
+    cases: list[tuple[str, str, tuple | None, tuple]], label: str = ""
 ) -> list[dict]:
     """逐个 URL 跑完整降级链路，记录命中路径、分段耗时和是否符合预期"""
     from crawl4ai_mcp.crawler import Crawler
 
     crawler = Crawler()
     rows = []
-    for group, url, expect in cases:
+    for group, url, expect, texts in cases:
         t0 = time.perf_counter()
         try:
             r = crawler.crawl_single(url)
         except Exception as e:  # 单个站点异常不该中断整轮
             r = {"success": False, "error": f"{type(e).__name__}: {e}"}
         dt = time.perf_counter() - t0
-        chars = len(r.get("markdown") or "")
+        md = r.get("markdown") or ""
+        chars = len(md)
         timings = r.get("timings") or {}
         row = {
             "group": group,
@@ -159,6 +121,8 @@ def run_crawls(
             "err": (r.get("error") or "")[:100],
             "timings": {k: timings.get(k) for k in ("fast", "cloud", "browser")},
             "expect": expect,
+            "expect_texts": texts,
+            "missing_texts": [t for t in texts if t not in md],
             "cached": bool(r.get("cached")),
         }
         row["verdict"], row["detail"] = _judge(row)
@@ -174,15 +138,19 @@ def run_crawls(
 def _judge(row: dict) -> tuple[str, str]:
     """判定结果是否符合预期。
 
-    返回 (标记, 说明)。预期成功却失败、预期失败却成功、error_code 变了，
-    都算不符合预期——这类偏差比单纯的失败更值得报警。
+    返回 (标记, 说明)。预期成功却失败、预期失败却成功、error_code 变了、
+    关键内容缺失，都算不符合预期——这类偏差比单纯的失败更值得报警。
     """
     expect = row["expect"]
     if expect is None:
-        if row["ok"] and row["chars"] >= MIN_CHARS:
-            return "✓", ""
-        why = row["error_code"] or ("正文过短" if row["ok"] else "失败")
-        return "✗", why
+        if not row["ok"]:
+            return "✗", row["error_code"] or "失败"
+        if row["chars"] < MIN_CHARS:
+            return "✗", "正文过短"
+        missing = row.get("missing_texts") or []
+        if missing:
+            return "✗", f"缺关键内容: {'; '.join(missing[:2])}"
+        return "✓", ""
     kind, code = expect
     if kind != "error":
         return "?", "未知预期"
@@ -284,6 +252,42 @@ def run_batch_throughput(
     }
 
 
+def run_sites(sites: list[tuple[str, str, int, int]]) -> list[dict]:
+    """crawl_site 站内爬取：清缓存跑快速 BFS，看能收多少页、多久"""
+    from crawl4ai_mcp import cache as cache_mod
+    from crawl4ai_mcp.crawler import Crawler
+
+    crawler = Crawler()
+    rows = []
+    for group, url, depth, pages in sites:
+        cache_mod.clear()  # 站内爬取内部会带缓存，先清掉看冷启动
+        t0 = time.perf_counter()
+        try:
+            r = crawler.crawl_site(url, depth=depth, pages=pages)
+        except Exception as e:  # 单个站点异常不该中断整轮
+            r = {"successful_pages": 0, "total_pages": 0}
+            r["error"] = f"{type(e).__name__}: {e}"
+        dt = time.perf_counter() - t0
+        ok_pages = r.get("successful_pages", 0)
+        row = {
+            "group": group,
+            "url": url,
+            "depth": depth,
+            "ok_pages": ok_pages,
+            "pages": r.get("total_pages", 0),
+            "sec": round(dt, 1),
+            "err": (r.get("error") or "")[:100],
+        }
+        row["verdict"] = "✓" if ok_pages >= SITE_MIN_OK else "✗"
+        row["detail"] = "" if row["verdict"] == "✓" else (row["err"] or "成功页过少")
+        print(
+            f"  {ok_pages}/{row['pages']}页 {dt:6.1f}s  {row['verdict']}  {group}",
+            flush=True,
+        )
+        rows.append(row)
+    return rows
+
+
 # ── 渲染 ──────────────────────────────────────────────────
 
 
@@ -358,14 +362,13 @@ def render(run: dict, history: list[dict]) -> str:
         )
         for r, name in items:
             expect = r["expect"]
-            expect_txt = (
-                "成功"
-                if expect is None
-                else "失败·"
-                + "/".join(
+            if expect is None:
+                expect_txt = "成功·含关键内容" if r.get("expect_texts") else "成功"
+            else:
+                codes = (
                     expect[1] if isinstance(expect[1], (tuple, list)) else (expect[1],)
                 )
-            )
+                expect_txt = "失败·" + "/".join(codes)
             status = "✓" if r["verdict"] == "✓" else f"✗ {r['detail']}"
             lines.append(
                 f"| {name} | {expect_txt} | `{r['method']}` | "
@@ -415,6 +418,22 @@ def render(run: dict, history: list[dict]) -> str:
             f"- 同样这批逐个抓合计 {batch['serial_sec']}s → "
             f"**加速 {batch['speedup']}x**",
         ]
+
+    sites = run.get("sites")
+    if sites:
+        lines += [
+            "",
+            "### 站内爬取（`crawl_site` 快速 BFS）",
+            "",
+            "| 条目 | 深度 | 成功页 | 耗时 | 结果 |",
+            "|------|------|--------|------|------|",
+        ]
+        for r in sites:
+            status = "✓" if r["verdict"] == "✓" else f"✗ {r['detail']}"
+            lines.append(
+                f"| {r['group']} | {r['depth']} | {r['ok_pages']}/{r['pages']} | "
+                f"{r['sec']}s | {status} |"
+            )
 
     lines += [
         "",
@@ -504,10 +523,15 @@ def _atomic_write(path: Path, content: str) -> None:
 
 
 def _src_hash() -> str:
-    """源码指纹，用于判断自上次 benchmark 后有没有改动"""
+    """源码指纹，用于判断自上次 benchmark 后有没有改动
+
+    包含 bench.py 自身和 bench.yml：改数据集/判定逻辑也要触发重跑
+    """
     h = hashlib.sha256()
     for p in sorted((ROOT / "src").rglob("*.py")):
         h.update(p.read_bytes())
+    h.update(Path(__file__).read_bytes())
+    h.update(DATASET.read_bytes())
     return h.hexdigest()
 
 
@@ -585,6 +609,11 @@ def main(argv=None) -> int:
     print("[bench] 批量吞吐：")
     batch = run_batch_throughput(cases, crawls)
 
+    sites: list[dict] = []
+    if SITES:
+        print("[bench] 站内爬取：")
+        sites = run_sites(SITES)
+
     print("[bench] 搜索：")
     searches = run_searches(QUERIES, repeat=args.repeat)
 
@@ -597,6 +626,7 @@ def main(argv=None) -> int:
         "searches": searches,
         "warm": warm,
         "batch": batch,
+        "sites": sites,
         "summary": _summary(crawls, searches),
     }
 

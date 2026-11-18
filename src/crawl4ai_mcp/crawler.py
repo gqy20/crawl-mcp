@@ -10,12 +10,15 @@ crawl_single / crawl_batch 自动降级：先尝试阶段 0，失败或内容不
 """
 
 import asyncio
+import hashlib
 import json
+import logging
+import os
 import re
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 # crawl4ai 重依赖（~0.8s import）按需懒加载：只有浏览器/LLM 路径才 import，
 # 快速提取路径（ddgs.extract）和 CLI 冷启动不付这个成本。
@@ -29,6 +32,7 @@ from .content import (
     classify_error,
     clean_markdown,
     looks_like_js_shell,
+    looks_like_login_wall,
     suggest_action,
 )
 from .llm_config import get_default_llm_config
@@ -42,6 +46,9 @@ MIN_CONTENT_LENGTH_DEFAULT = 200  # 快速提取结果低于此阈值触发降�
 #: 同一域名连续这么多次确定性失败，就把「这个域名不行」记下来
 DOMAIN_MEMORY_MIN_HITS = 2
 
+#: 浏览器重试总预算（秒）：重试+退避不超过它，最后一次尝试另算（≤30s 页面超时+延迟）
+BROWSER_RETRY_BUDGET = 60.0
+
 SPA_INDICATORS = [
     '<div id="app"',
     '<div id="root"',
@@ -50,6 +57,95 @@ SPA_INDICATORS = [
     '<div id="vue"',  # Vue.js
     "ng-app",  # Angular
 ]
+
+logger = logging.getLogger(__name__)
+
+
+def _env_browser_config(urls: list[str] | None = None):
+    """从登录态配置构造 BrowserConfig（认证与 API key 同一约束：不由调用方传入）。
+
+    优先级（叠加生效，storage_state 只取一支）：
+    1. 站点级：``~/.crawl_mcp/auth/<注册域>.json`` 中 domain 覆盖任一 URL 的文件，
+       合并成一个 storage_state dict——按 URL 精确注入，不全局广播登录态
+    2. 全局兜底：``CRAWL_MCP_STORAGE_STATE`` 文件（无站点级匹配时）
+    3. ``CRAWL_MCP_COOKIES``：Playwright cookie 数组 JSON，始终叠加
+
+    未配置/格式错返回 None（等价默认 BrowserConfig），配置错不阻断爬取只告警。
+    """
+    kwargs: dict[str, Any] = {}
+
+    if urls:
+        try:
+            from . import auth_store
+
+            merged = auth_store.merged_state_for(urls)
+            if merged:
+                kwargs["storage_state"] = merged
+        except Exception as e:  # auth 目录坏不能拖垮爬取
+            logger.warning("登录态目录读取失败，已忽略: %s", e)
+
+    raw = (os.getenv("CRAWL_MCP_COOKIES") or "").strip()
+    if raw:
+        try:
+            cookies = json.loads(raw)
+        except ValueError:
+            logger.warning("CRAWL_MCP_COOKIES 不是合法 JSON，已忽略")
+            cookies = None
+        if cookies is not None and not (
+            isinstance(cookies, list)
+            and all(
+                isinstance(c, dict) and c.get("name") and c.get("value")
+                for c in cookies
+            )
+        ):
+            logger.warning(
+                "CRAWL_MCP_COOKIES 应为 [{name, value, domain, ...}] 数组，已忽略"
+            )
+            cookies = None
+        if cookies:
+            kwargs["cookies"] = cookies
+
+    state = (os.getenv("CRAWL_MCP_STORAGE_STATE") or "").strip()
+    if state and "storage_state" not in kwargs:
+        if os.path.isfile(state):
+            kwargs["storage_state"] = state
+        else:
+            logger.warning(
+                "CRAWL_MCP_STORAGE_STATE 指向的文件不存在，已忽略: %s", state
+            )
+
+    if not kwargs:
+        return None
+    from crawl4ai import BrowserConfig
+
+    return BrowserConfig(**kwargs)
+
+
+def _auth_fingerprint() -> str:
+    """登录态指纹，进缓存键。
+
+    登录态改变了请求语义：配好/更换/清掉 cookie 后，同一 URL 的正/负缓存
+    都不该再命中（否则「配好 cookie 重试」会撞上 5 分钟前的失败负缓存，
+    看起来像 cookie 没生效）。指纹覆盖全局 env + 登录态目录（文件增删/改动
+    = mtime 变 = 指纹变）。只取 hash，cookie 值不进缓存键/日志。
+    """
+    raw = "{}\x00{}".format(
+        os.getenv("CRAWL_MCP_COOKIES") or "",
+        os.getenv("CRAWL_MCP_STORAGE_STATE") or "",
+    )
+    try:
+        from . import auth_store
+
+        d = auth_store.auth_dir()
+        if d.is_dir():
+            for p in sorted(d.glob("*.json")):
+                st = p.stat()
+                raw += f"\x00{p.name}:{st.st_mtime_ns}:{st.st_size}"
+    except Exception:
+        pass
+    if not raw.strip("\x00"):
+        return ""
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:12]
 
 
 def _calculate_success_rate(results: list[dict[str, Any]]) -> str:
@@ -200,6 +296,15 @@ class Crawler:
                 should_enhance=True,
             )
 
+        # 登录墙/空状态壳：渲染成功、字数过阈值，但内容是未登录占位
+        # （空画廊、登录引导；AI 站点高发，如 z.ai 匿名首页），降级浏览器渲染
+        if extract_result.get("success") and looks_like_login_wall(content):
+            return _FastExtractDecision(
+                should_fallback=True,
+                fallback_reason="快速提取拿到登录墙/空状态占位，没有正文",
+                should_enhance=True,
+            )
+
         if extract_result.get("success") and len(content) >= min_content_length:
             return _FastExtractDecision(should_fallback=False)
 
@@ -309,21 +414,70 @@ class Crawler:
 
         return result
 
-    def _create_config(self, enhanced: bool = False):
-        """创建爬虫配置"""
+    def _create_config(
+        self,
+        enhanced: bool = False,
+        css_selector: str | None = None,
+        excluded_selector: str | None = None,
+        scan_full_page: bool = False,
+    ):
+        """创建爬虫配置
+
+        enhanced=深度模式：
+        - PruningContentFilter 剪导航/boilerplate（实测 Wikipedia 导航行 32%→0.8%）
+        - wait_for 等 body 出现实文本再返回（替代盲等，渲染完即停）
+        - magic（随机 UA + navigator 伪装 + 拟人鼠标）+ 删弹窗/cookie 同意横幅
+        代价是图片会被剪掉——要图片用普通浏览器路径（enhanced=False）。
+
+        css_selector/excluded_selector/scan_full_page 只在浏览器路径生效
+        （快速提取不支持选择器，fast 成功时这些参数被忽略）。
+        """
         from crawl4ai import CrawlerRunConfig, DefaultMarkdownGenerator
 
-        markdown_generator = DefaultMarkdownGenerator(
-            options={
-                "citations": False,
-                "body_width": None,
-                "ignore_links": False,
-            }
-        )
+        generator_options = {
+            "citations": False,
+            "body_width": None,
+            "ignore_links": False,
+        }
+        # 可选注入：普通/enhanced 两个分支共享
+        extra: dict[str, Any] = {}
+        if css_selector:
+            extra["css_selector"] = css_selector
+        if excluded_selector:
+            extra["excluded_selector"] = excluded_selector
+        if scan_full_page:
+            # 无限滚动/长列表页：滚动加载到底再提取
+            extra.update(scan_full_page=True, scroll_delay=0.5)
+        if enhanced:
+            from crawl4ai.content_filter_strategy import PruningContentFilter
+
+            markdown_generator = DefaultMarkdownGenerator(
+                content_filter=PruningContentFilter(
+                    threshold=0.48, threshold_type="fixed"
+                ),
+                options=generator_options,
+            )
+            return CrawlerRunConfig(
+                markdown_generator=markdown_generator,
+                page_timeout=30000,
+                # 正文有实文本即返回；等不到最多 15s（原盲等语义），渲染完即停
+                wait_for=(
+                    "js:() => document.body && "
+                    "document.body.innerText.trim().length >= 200"
+                ),
+                wait_for_timeout=15000,
+                # 条件命中后再小等一下，给懒加载图片/收尾数据留时间
+                delay_before_return_html=1.0,
+                magic=True,
+                remove_overlay_elements=True,
+                remove_consent_popups=True,
+                **extra,
+            )
         return CrawlerRunConfig(
-            markdown_generator=markdown_generator,
-            page_timeout=60000,
-            delay_before_return_html=5.0 if not enhanced else 15.0,
+            markdown_generator=DefaultMarkdownGenerator(options=generator_options),
+            page_timeout=30000,
+            delay_before_return_html=5.0,
+            **extra,
         )
 
     async def _crawl(
@@ -331,27 +485,45 @@ class Crawler:
         url: str,
         enhanced: bool = False,
         llm_config: dict[str, Any] | None = None,
+        css_selector: str | None = None,
+        excluded_selector: str | None = None,
+        scan_full_page: bool = False,
     ) -> dict[str, Any]:
         """内部异步爬取方法（浏览器实例复用版）"""
         from crawl4ai import AsyncWebCrawler
 
-        config = self._create_config(enhanced)
+        config = self._create_config(
+            enhanced,
+            css_selector=css_selector,
+            excluded_selector=excluded_selector,
+            scan_full_page=scan_full_page,
+        )
         max_retries = 3
+        start = time.monotonic()
 
-        async with AsyncWebCrawler(verbose=False) as crawler:
+        async with AsyncWebCrawler(
+            verbose=False, config=_env_browser_config([url])
+        ) as crawler:
             for attempt in range(max_retries + 1):
                 try:
                     result = await crawler.arun(url=url, config=config)
-                    return {
-                        "success": result.success,
-                        "markdown": result.markdown.raw_markdown
-                        if result.success
-                        else "",
-                        "title": result.metadata.get("title", "")
-                        if result.success
-                        else "",
-                        "error": result.error_message if not result.success else None,
-                    }
+                    return Crawler._postcheck_browser(
+                        {
+                            "success": result.success,
+                            # 剪枝结果（enhanced）优先，和 fast/cloud 同一套清洗
+                            "markdown": clean_markdown(
+                                self._markdown_text(result.markdown)
+                            )
+                            if result.success
+                            else "",
+                            "title": result.metadata.get("title", "")
+                            if result.success
+                            else "",
+                            "error": result.error_message
+                            if not result.success
+                            else None,
+                        }
+                    )
                 except Exception as e:
                     error_msg = str(e)
                     is_network_error = any(
@@ -364,6 +536,10 @@ class Crawler:
                         ]
                     )
                     if is_network_error and attempt < max_retries:
+                        # 重试有总预算：不能把 MCP 工具超时（120s）全耗在重试上，
+                        # 要给最后一次尝试和 fast/cloud 阶段留时间
+                        if time.monotonic() - start >= BROWSER_RETRY_BUDGET:
+                            raise
                         await asyncio.sleep(2**attempt)
                         continue
                     raise
@@ -492,9 +668,16 @@ class Crawler:
 
     def crawl_cloud(self, url: str) -> dict[str, Any]:
         """强制走 Crawl4AI Cloud 抓取单页（需配置 CRAWL4AI_API_KEY）"""
+        cache_opts = {"forced": "cloud"}
+        cached = self._lookup_cached(url, cache_opts)
+        if cached is not None:
+            return cached
+        t0 = time.perf_counter()
         result = self._normalize_cloud_result(cloud_scrape(url))
         result["method"] = "cloud"
-        return result
+        timings = {"cloud": round(time.perf_counter() - t0, 2)}
+        # 和 crawl_single 一样走统一收尾：error_code / hint / 缓存
+        return self._finalize(result, timings, cache_opts, url)
 
     def crawl_single(
         self,
@@ -503,6 +686,9 @@ class Crawler:
         llm_config: dict[str, Any] | None = None,
         prefer_fast: bool = True,
         min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
+        css_selector: str | None = None,
+        excluded_selector: str | None = None,
+        scan_full_page: bool = False,
     ) -> dict[str, Any]:
         """爬取单个网页（自动降级：快速提取 → 浏览器渲染）
 
@@ -515,6 +701,12 @@ class Crawler:
             llm_config: [实验性] LLM 后处理配置（可选）
             prefer_fast: 是否优先尝试快速提取（默认 True，设为 False 强制用浏览器）
             min_content_length: 快速提取结果的最小内容长度阈值（默认 200 字符）
+            css_selector: 只提取匹配元素的正文（如 "article" / "#content"），
+                排除整站导航/侧栏噪声；仅在浏览器路径生效
+            excluded_selector: 排除匹配的元素（如 "nav,footer,aside"）；
+                仅在浏览器路径生效
+            scan_full_page: 滚动加载整页再提取（无限滚动/长列表页）；
+                仅在浏览器路径生效
         """
         parsed_llm = _parse_llm_config(llm_config)
         cache_opts = {
@@ -522,6 +714,11 @@ class Crawler:
             "prefer_fast": prefer_fast,
             "min_content_length": min_content_length,
             "llm": parsed_llm,
+            "css_selector": css_selector,
+            "excluded_selector": excluded_selector,
+            "scan_full_page": scan_full_page,
+            # 登录态指纹：配/换 cookie 后旧正负缓存全部失效，立即重新请求
+            "auth": _auth_fingerprint(),
         }
         cached = self._lookup_cached(url, cache_opts)
         if cached is not None:
@@ -575,11 +772,17 @@ class Crawler:
                 timings["cloud"] = round(time.perf_counter() - t0, 2)
             if cloud_result and cloud_result.get("success"):
                 result = self._normalize_cloud_result(cloud_result)
-                result["method"] = "cloud_fallback"
-                result["fallback_reason"] = fallback_reason
-                if parsed_llm and result["success"]:
-                    result = self._apply_llm_postprocess(result, parsed_llm)
-                return self._finalize(result, timings, cache_opts, url)
+                # Cloud 也可能拿到登录墙壳（云端同样匿名访问），交给浏览器
+                if looks_like_login_wall(result["markdown"]):
+                    fallback_reason = (
+                        f"{fallback_reason} | Cloud 兜底也只拿到登录墙/空状态占位"
+                    )
+                else:
+                    result["method"] = "cloud_fallback"
+                    result["fallback_reason"] = fallback_reason
+                    if parsed_llm and result["success"]:
+                        result = self._apply_llm_postprocess(result, parsed_llm)
+                    return self._finalize(result, timings, cache_opts, url)
             if cloud_result and cloud_result.get("error"):
                 # Cloud 失败不阻断降级链路，把原因带进 fallback_reason 便于排查
                 fallback_reason = (
@@ -604,7 +807,16 @@ class Crawler:
 
         # ── Phase 1c: 浏览器渲染降级 ─────────────────────────
         t0 = time.perf_counter()
-        result = run_async(self._crawl(url, enhanced))
+        result = run_async(
+            self._crawl(
+                url,
+                enhanced,
+                llm_config=None,
+                css_selector=css_selector,
+                excluded_selector=excluded_selector,
+                scan_full_page=scan_full_page,
+            )
+        )
         timings["browser"] = round(time.perf_counter() - t0, 2)
         if prefer_fast:
             result["method"] = "browser_fallback"
@@ -646,7 +858,100 @@ class Crawler:
     async def _crawl_site(
         self, url: str, depth: int = 2, pages: int = 10, concurrent: int = 3
     ) -> dict[str, Any]:
-        """整站深度爬取（使用 BFSDeepCrawlStrategy）"""
+        """整站深度爬取：入口页能走快速路径就用快速 BFS，SPA/失败才退回浏览器 BFS"""
+        entry = self.crawl_single(url)
+        if entry.get("success") and entry.get("method") != "browser_fallback":
+            results = await self._crawl_site_fast(entry, url, depth, pages, concurrent)
+        else:
+            results = await self._crawl_site_browser(url, depth, pages, concurrent)
+
+        return {
+            "successful_pages": sum(1 for r in results if r["success"]),
+            "total_pages": len(results),
+            "success_rate": _calculate_success_rate(results),
+            "results": results,
+        }
+
+    async def _crawl_site_fast(
+        self,
+        entry: dict[str, Any],
+        url: str,
+        depth: int,
+        pages: int,
+        concurrent: int,
+    ) -> list[dict[str, Any]]:
+        """快速路径 BFS：从 Markdown 提站内链接，逐层交给 crawl_batch（自动降级）
+
+        静态站整站爬取从「每页浏览器 15-23s」降到「每页快速提取 ~0.5s、层内并行」。
+        个别页面快速提取失败时 crawl_batch 内部仍会降级，不影响整站。
+        """
+        results = [entry]
+        visited = {url}
+        frontier: list[str] = []
+        for link in self._site_links(entry.get("markdown", ""), url):
+            if link not in visited:
+                visited.add(link)
+                frontier.append(link)
+
+        for _ in range(depth):
+            frontier = frontier[: pages - len(results)]
+            if not frontier:
+                break
+            batch = await self._crawl_batch(frontier, concurrent=concurrent)
+            results.extend(batch)
+            next_frontier: list[str] = []
+            for page_url, r in zip(frontier, batch):
+                if not r.get("success"):
+                    continue
+                for link in self._site_links(r.get("markdown", ""), page_url):
+                    if link not in visited and len(visited) < pages:
+                        visited.add(link)
+                        next_frontier.append(link)
+            frontier = next_frontier
+
+        return results[:pages]
+
+    # Markdown 内联链接；(?<!!) 排除图片 ![alt](url)
+    _MD_LINK_RE = re.compile(r"(?<!!)\[[^\]]*\]\(([^)\s]+)\)")
+    _ASSET_EXTS = (
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".webp",
+        ".ico",
+        ".css",
+        ".js",
+    )
+
+    def _site_links(self, markdown: str, base_url: str) -> list[str]:
+        """从 Markdown 提取同站内联链接（去 fragment、去重）
+
+        ponytail: 引用式链接已由 clean_markdown 解析成内联；
+        需要渲染后才出现的导航链接拿不到，这类站点退回浏览器 BFS。
+        """
+        base_netloc = urlparse(base_url).netloc.lower()
+        out: list[str] = []
+        seen: set[str] = set()
+        for m in self._MD_LINK_RE.finditer(markdown or ""):
+            link = urljoin(base_url, m.group(1)).split("#")[0]
+            p = urlparse(link)
+            if p.scheme not in ("http", "https"):
+                continue
+            if p.netloc.lower() != base_netloc:
+                continue
+            if p.path.lower().endswith(self._ASSET_EXTS):
+                continue
+            if link not in seen:
+                seen.add(link)
+                out.append(link)
+        return out
+
+    async def _crawl_site_browser(
+        self, url: str, depth: int, pages: int, concurrent: int
+    ) -> list[dict[str, Any]]:
+        """浏览器 BFS 深爬（BFSDeepCrawlStrategy），SPA 站点兜底"""
         from crawl4ai import AsyncWebCrawler, BFSDeepCrawlStrategy, SemaphoreDispatcher
 
         config = self._create_config()
@@ -655,35 +960,25 @@ class Crawler:
         )
         dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
 
-        async with AsyncWebCrawler(verbose=False) as crawler:
+        async with AsyncWebCrawler(
+            verbose=False, config=_env_browser_config([url])
+        ) as crawler:
             raw_result = await crawler.arun(
                 url=url, config=config, dispatcher=dispatcher
             )
 
         # BFSDeepCrawlStrategy 返回列表，普通爬取返回单个结果
         results_list = raw_result if isinstance(raw_result, list) else [raw_result]
-
-        formatted = [
-            {
-                "success": r.success,
-                "markdown": r.markdown.raw_markdown if r.success else "",
-                "title": r.metadata.get("title", "") if r.success else "",
-                "error": r.error_message if not r.success else None,
-            }
-            for r in results_list
-        ]
-
-        return {
-            "successful_pages": sum(1 for r in formatted if r["success"]),
-            "total_pages": len(formatted),
-            "success_rate": _calculate_success_rate(formatted),
-            "results": formatted,
-        }
+        return [self._format_crawl4ai_result(r) for r in results_list]
 
     def crawl_site(
         self, url: str, depth: int = 2, pages: int = 10, concurrent: int = 3
     ) -> dict[str, Any]:
-        """爬取整个网站（同步封装）"""
+        """爬取整个网站（同步封装）
+
+        入口页快速提取成功时走快速 BFS（逐层 crawl_batch，自动降级），
+        入口页需要浏览器渲染（SPA）或失败时退回浏览器 BFS 深爬。
+        """
         return run_async(
             self._crawl_site(url, depth=depth, pages=pages, concurrent=concurrent)
         )
@@ -693,14 +988,49 @@ class Crawler:
     # ================================================================
 
     @staticmethod
+    def _markdown_text(md) -> str:
+        """enhanced 挂了 content_filter 时剪枝结果在 fit_markdown；否则用 raw"""
+        fit = getattr(md, "fit_markdown", None)
+        if isinstance(fit, str) and fit:
+            return fit
+        raw = getattr(md, "raw_markdown", None)
+        return raw if isinstance(raw, str) else ""
+
+    @staticmethod
+    def _postcheck_browser(result: dict[str, Any]) -> dict[str, Any]:
+        """浏览器成功结果的最后一道把关：登录墙壳降为失败。
+
+        带着过期/无效登录态渲染出的页面，字数够但内容是「登录引导/空状态」，
+        对调用方是没法用的假成功——降级为 login_wall 失败，hint 会指向
+        重新配置/导出登录态。原文不再保留（就是占位壳，没有正文价值）。
+        """
+        if result.get("success") and looks_like_login_wall(
+            result.get("markdown") or ""
+        ):
+            result.update(
+                success=False,
+                markdown="",
+                title="",
+                error="浏览器渲染后仍需要登录（登录态未生效或已过期）",
+            )
+        return result
+
+    @staticmethod
     def _format_crawl4ai_result(raw) -> dict[str, Any]:
         """将 crawl4ai 原始结果标准化为统一字典格式"""
-        return {
-            "success": raw.success,
-            "markdown": raw.markdown.raw_markdown if raw.success else "",
-            "title": raw.metadata.get("title", "") if raw.success else "",
-            "error": raw.error_message if not raw.success else None,
-        }
+        return Crawler._postcheck_browser(
+            {
+                "success": raw.success,
+                # 和 fast 路径同一套清洗（引用链接、链接定义块、短导航行、boilerplate）
+                "markdown": clean_markdown(
+                    Crawler._markdown_text(raw.markdown)
+                )
+                if raw.success
+                else "",
+                "title": raw.metadata.get("title", "") if raw.success else "",
+                "error": raw.error_message if not raw.success else None,
+            }
+        )
 
     async def _parallel_fast_extract(self, urls: list[str]) -> list[dict[str, Any]]:
         """并行快速提取多个 URL（ThreadPoolExecutor，DDGS 是同步的）"""
@@ -743,6 +1073,8 @@ class Crawler:
         urls: list[str],
         enhanced_flags: list[bool],
         concurrent: int,
+        css_selector: str | None = None,
+        excluded_selector: str | None = None,
     ) -> list[dict[str, Any]]:
         """仅对子集 URL 执行浏览器爬取，按 enhanced 标志分组"""
         if len(urls) != len(enhanced_flags):
@@ -762,10 +1094,16 @@ class Crawler:
                 return []
             from crawl4ai import AsyncWebCrawler, SemaphoreDispatcher
 
-            config = self._create_config(enhanced=is_enhanced)
+            config = self._create_config(
+                enhanced=is_enhanced,
+                css_selector=css_selector,
+                excluded_selector=excluded_selector,
+            )
             _, group_urls = zip(*url_list)
             dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
-            async with AsyncWebCrawler(verbose=False) as crawler:
+            async with AsyncWebCrawler(
+                verbose=False, config=_env_browser_config(list(group_urls))
+            ) as crawler:
                 raw = await crawler.arun_many(
                     urls=list(group_urls), config=config, dispatcher=dispatcher
                 )
@@ -790,6 +1128,8 @@ class Crawler:
         llm_concurrent: int = 3,
         prefer_fast: bool = True,
         min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
+        css_selector: str | None = None,
+        excluded_selector: str | None = None,
     ) -> list[dict[str, Any]]:
         """批量爬取（三阶段：并行快提取 → 选浏览器 → LLM 后处理）
 
@@ -806,6 +1146,9 @@ class Crawler:
             "prefer_fast": prefer_fast,
             "min_content_length": min_content_length,
             "llm": parsed,
+            "css_selector": css_selector,
+            "excluded_selector": excluded_selector,
+            "auth": _auth_fingerprint(),
         }
         results: list[dict[str, Any] | None] = [None] * len(urls)
 
@@ -825,8 +1168,10 @@ class Crawler:
             # 分离成功与需降级
             fallback_indices: list[int] = []
             decisions: dict[int, _FastExtractDecision] = {}
+            fast_by_index: dict[int, dict[str, Any]] = {}
             skip_browser: set[int] = set()
             for i, fr in zip(pending, fast_results):
+                fast_by_index[i] = fr
                 decision = self._decide_fast_extract_next_step(fr, min_content_length)
                 decisions[i] = decision
                 if not decision.should_fallback:
@@ -875,15 +1220,14 @@ class Crawler:
                 ]
                 for i in remaining_indices:
                     if i in skip_browser:
-                        code = classify_error(
-                            results[i].get("error") if results[i] else None
-                        )
+                        # 保留快速提取的原始错误文本，收尾时才能归类出
+                        # dns_error / connection_refused（results[i] 此刻还是 None）
+                        fast_err = fast_by_index[i].get("error")
                         skipped = {
                             "success": False,
                             "markdown": "",
                             "title": "",
-                            "error": "快速提取和 Cloud 兜底都失败（本机网络问题）",
-                            "error_code": code or "unknown",
+                            "error": f"快速提取和 Cloud 兜底都失败：{fast_err}",
                             "method": "cloud_fallback",
                             "fallback_reason": "本机网络问题，跳过浏览器路径",
                         }
@@ -896,7 +1240,11 @@ class Crawler:
                         decisions[i].should_enhance for i in browser_indices
                     ]
                     browser_results = await self._browser_crawl_subset(
-                        fallback_urls, enhanced_flags, concurrent
+                        fallback_urls,
+                        enhanced_flags,
+                        concurrent,
+                        css_selector=css_selector,
+                        excluded_selector=excluded_selector,
                     )
 
                     for idx, br in zip(browser_indices, browser_results):
@@ -908,9 +1256,16 @@ class Crawler:
             from crawl4ai import AsyncWebCrawler, SemaphoreDispatcher
 
             if pending:
-                config = self._create_config(enhanced=False)
+                config = self._create_config(
+                    enhanced=False,
+                    css_selector=css_selector,
+                    excluded_selector=excluded_selector,
+                )
                 dispatcher = SemaphoreDispatcher(semaphore_count=concurrent)
-                async with AsyncWebCrawler(verbose=False) as crawler:
+                async with AsyncWebCrawler(
+                    verbose=False,
+                    config=_env_browser_config([urls[i] for i in pending]),
+                ) as crawler:
                     raw_results = await crawler.arun_many(
                         urls=[urls[i] for i in pending],
                         config=config,
@@ -929,7 +1284,12 @@ class Crawler:
                         r["llm_skipped"] = "CRAWL_MCP_API_KEY 未配置，已跳过 LLM 处理"
                 return results  # type: ignore[return-value]
 
-            successful = [(i, r) for i, r in enumerate(results) if r and r["success"]]
+            # 缓存命中的结果已带 LLM 字段（缓存键含 llm 配置），不重复调 LLM
+            successful = [
+                (i, r)
+                for i, r in enumerate(results)
+                if r and r["success"] and not r.get("cached")
+            ]
             if successful:
                 llm_results = await self._postprocess_batch_with_llm(
                     [r for _, r in successful],
@@ -968,6 +1328,8 @@ class Crawler:
         llm_concurrent: int = 3,
         prefer_fast: bool = True,
         min_content_length: int = MIN_CONTENT_LENGTH_DEFAULT,
+        css_selector: str | None = None,
+        excluded_selector: str | None = None,
     ) -> list[dict[str, Any]]:
         """批量爬取多个网页（自动降级版）
 
@@ -981,6 +1343,10 @@ class Crawler:
             llm_concurrent: LLM 处理并发数
             prefer_fast: 是否优先尝试快速提取（默认 True）
             min_content_length: 快速提取最小内容长度阈值（默认 200 字符）
+            css_selector: 只提取匹配元素的正文（如 "article"），
+                适合批量同构页面；仅在浏览器路径生效
+            excluded_selector: 排除匹配的元素（如 "nav,footer,aside"）；
+                仅在浏览器路径生效
         """
         return run_async(
             self._crawl_batch(
@@ -990,5 +1356,7 @@ class Crawler:
                 llm_concurrent=llm_concurrent,
                 prefer_fast=prefer_fast,
                 min_content_length=min_content_length,
+                css_selector=css_selector,
+                excluded_selector=excluded_selector,
             )
         )

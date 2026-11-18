@@ -62,6 +62,17 @@ class TestCrawlToolSchemas:
         for param in ("url", "enhanced", "llm_config"):
             assert param in sig.parameters
 
+    def test_crawl_single_has_selector_and_full_page_params(self):
+        tool = _get_tool("crawl_single")
+        sig = inspect.signature(tool.fn)
+        for param in ("css_selector", "excluded_selector", "scan_full_page"):
+            assert param in sig.parameters
+        # 参数描述要说清「只在浏览器路径生效」，避免调用方以为 fast 路径也吃选择器
+        props = tool.parameters["properties"]
+        assert "浏览器路径" in props["css_selector"]["description"]
+        assert "浏览器路径" in props["excluded_selector"]["description"]
+        assert "浏览器路径" in props["scan_full_page"]["description"]
+
     def test_crawl_site_has_depth_pages_concurrent(self):
         tool = _get_tool("crawl_site")
         sig = inspect.signature(tool.fn)
@@ -104,7 +115,9 @@ class TestToolDescriptions:
         assert "crawl_site" in desc
         assert "prefer_fast=False" in desc
         assert "enhanced=True" in desc
-        assert "只影响浏览器路径" in desc
+        # enhanced 的剪枝语义、图片取舍、只作用于浏览器路径，都要向调用方说清
+        assert "剪" in desc and "图片" in desc
+        assert "只影响浏览器路径" in desc or "浏览器路径生效" in desc
 
     def test_crawl_batch_description_distinguishes_known_urls_from_site_crawl(self):
         desc = _get_tool("crawl_batch").description
@@ -114,11 +127,11 @@ class TestToolDescriptions:
         assert "crawl_site" in desc
         assert "prefer_fast=False" in desc
 
-    def test_crawl_site_description_states_no_fast_extract_or_llm(self):
+    def test_crawl_site_description_states_fast_first_and_no_llm(self):
         desc = _get_tool("crawl_site").description
 
         assert "发现链接" in desc
-        assert "不走快速提取" in desc
+        assert "快速" in desc
         assert "不支持 LLM 后处理" in desc
 
     def test_search_descriptions_say_results_are_not_full_content(self):
@@ -140,7 +153,14 @@ class TestCrawlToolFunctions:
         from crawl4ai_mcp.fastmcp_server import _crawler
 
         def mock(
-            url, enhanced, llm_config=None, prefer_fast=True, min_content_length=200
+            url,
+            enhanced,
+            llm_config=None,
+            prefer_fast=True,
+            min_content_length=200,
+            css_selector=None,
+            excluded_selector=None,
+            scan_full_page=False,
         ):
             return {"success": True, "markdown": "# T", "title": "T"}
 
@@ -168,6 +188,8 @@ class TestCrawlToolFunctions:
             llm_concurrent=3,
             prefer_fast=True,
             min_content_length=200,
+            css_selector=None,
+            excluded_selector=None,
         ):
             return [{"success": True, "markdown": "# A"}]
 

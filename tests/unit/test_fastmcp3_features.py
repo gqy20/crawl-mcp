@@ -31,7 +31,8 @@ class TestNativeToolTimeout:
     # v0.2.0 统一降级：crawl_single/crawl_batch 含快速提取+浏览器 fallback 两阶段
     # extract_url 已合并到 crawl_single，不再独立工具
     EXPECTED_TIMEOUTS = {
-        "crawl_single": 75,
+        # 120s：fast(~1s) + Cloud 预算(10s) + 浏览器重试预算(60s) + 最后一次尝试(≤45s)
+        "crawl_single": 120,
         "crawl_site": 120,
         "crawl_batch": 180,
         "search_text": 45,

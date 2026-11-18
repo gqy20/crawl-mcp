@@ -1,6 +1,6 @@
 """降级策略测试：终止错误跳过降级、本机网络错误跳过浏览器、负缓存、域名记忆"""
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -196,26 +196,27 @@ class TestNegativeCache:
 
 
 class TestDomainMemory:
-    def test_repeated_failure_skips_chain(self):
-        """同域名连续 2 次确定性失败后，直接给结论"""
+    def test_repeated_dns_failure_skips_chain(self):
+        """同域名连续 2 次域名级故障（DNS）后，直接给结论"""
         crawler = Crawler()
         failure = {
             "success": False,
             "content": "",
-            "error": "Failed to fetch: HTTP 404",
+            "error": "Could not resolve host: bad.invalid",
         }
         with (
             patch.object(
                 crawler._searcher, "extract_url", return_value=failure
             ) as extract,
+            patch.object(crawler, "_cloud_fallback", return_value=None),
             patch.object(crawler, "_crawl"),
         ):
-            crawler.crawl_single("https://bad.example.com/a")
-            crawler.crawl_single("https://bad.example.com/b")
-            third = crawler.crawl_single("https://bad.example.com/c")
+            crawler.crawl_single("https://bad.invalid/a")
+            crawler.crawl_single("https://bad.invalid/b")
+            third = crawler.crawl_single("https://bad.invalid/c")
 
         assert third["method"] == "domain_memo"
-        assert third["error_code"] == "http_404"
+        assert third["error_code"] == "dns_error"
         assert third["hint"]
         assert extract.call_count == 2  # 第三次没再请求
 
@@ -224,19 +225,48 @@ class TestDomainMemory:
         failure = {
             "success": False,
             "content": "",
-            "error": "Failed to fetch: HTTP 404",
+            "error": "Could not resolve host: bad.invalid",
         }
         with (
             patch.object(
                 crawler._searcher, "extract_url", return_value=failure
             ) as extract,
+            patch.object(crawler, "_cloud_fallback", return_value=None),
             patch.object(crawler, "_crawl"),
         ):
-            crawler.crawl_single("https://bad.example.com/a")
-            crawler.crawl_single("https://bad.example.com/b")
+            crawler.crawl_single("https://bad.invalid/a")
+            crawler.crawl_single("https://bad.invalid/b")
             other = crawler.crawl_single("https://good.example.com/c")
 
         assert other.get("method") != "domain_memo"
+        assert extract.call_count == 3
+
+    @pytest.mark.parametrize(
+        "error", ["Failed to fetch: HTTP 404", "Near-empty content (66 bytes)"]
+    )
+    def test_path_level_failure_does_not_pollute_domain(self, error):
+        """404/empty_content 是路径级问题：同站两条路径失败，
+        不能连累第三条路径（cas.cn/tzgg 空模板误伤 cas.cn 首页的回归）"""
+        crawler = Crawler()
+        failure = {"success": False, "content": "", "error": error}
+        browser_failure = {
+            "success": False,
+            "markdown": "",
+            "title": "",
+            "error": error,
+        }
+        with (
+            patch.object(
+                crawler._searcher, "extract_url", return_value=failure
+            ) as extract,
+            patch.object(crawler, "_cloud_fallback", return_value=None),
+            patch.object(crawler, "_crawl", return_value=browser_failure),
+        ):
+            crawler.crawl_single("https://cas.cn/tzgg/a")
+            crawler.crawl_single("https://cas.cn/tzgg/b")
+            third = crawler.crawl_single("https://cas.cn/")
+
+        assert third.get("method") != "domain_memo"
         assert extract.call_count == 3
 
     def test_success_clears_domain_memo_intent(self):
@@ -269,3 +299,81 @@ class TestCacheMeta:
         assert hit["cached"] is True
         assert hit["cached_age"] >= 0
         assert "timings" not in hit
+
+
+# ── 批量路径的同类问题 ────────────────────────────────────────
+
+
+class TestBatchFallbackPolicy:
+    def test_dns_error_keeps_original_error_and_skips_browser(self):
+        """批量 skip_browser 分支要保留快速提取的原始错误，
+        否则收尾归类只能得到 unknown"""
+        crawler = Crawler()
+        failure = {
+            "success": False,
+            "content": "",
+            "error": "Could not resolve host: bad.invalid",
+        }
+        with (
+            patch.object(
+                crawler,
+                "_parallel_fast_extract",
+                new=AsyncMock(return_value=[failure]),
+            ),
+            patch.object(
+                crawler, "_parallel_cloud_scrape", new=AsyncMock(return_value=[None])
+            ),
+            patch.object(crawler, "_browser_crawl_subset", new=AsyncMock()) as browser,
+        ):
+            results = crawler.crawl_batch(["https://bad.invalid/a"])
+
+        r = results[0]
+        assert r["success"] is False
+        assert r["error_code"] == "dns_error"
+        assert "Could not resolve" in r["error"]
+        browser.assert_not_called()
+
+    def test_cached_hit_not_reprocessed_by_llm(self, monkeypatch):
+        """缓存命中已带 LLM 字段（缓存键含 llm 配置），不能重复调 LLM"""
+        monkeypatch.setenv("CRAWL_MCP_API_KEY", "test_key")
+        crawler = Crawler()
+        ok = {"success": True, "content": "x" * 500}
+        llm = {"instruction": "总结"}
+        with (
+            patch.object(
+                crawler, "_parallel_fast_extract", new=AsyncMock(return_value=[ok])
+            ),
+            patch.object(
+                crawler,
+                "_postprocess_batch_with_llm",
+                new=AsyncMock(return_value=[{"summary": "s"}]),
+            ) as llm_mock,
+        ):
+            first = crawler.crawl_batch(["https://x.com/a"], llm_config=llm)
+            second = crawler.crawl_batch(["https://x.com/a"], llm_config=llm)
+
+        assert first[0]["llm_summary"] == "s"
+        assert second[0]["cached"] is True
+        assert second[0]["llm_summary"] == "s"
+        assert llm_mock.call_count == 1
+
+
+# ── 浏览器重试预算 ────────────────────────────────────────────
+
+
+class TestBrowserRetryBudget:
+    def test_retry_stops_when_budget_exhausted(self, monkeypatch):
+        """网络错误重试不能无限退避：预算用尽直接抛出，不再重试"""
+        import crawl4ai_mcp.crawler as mod
+        from crawl4ai_mcp.utils import run_async
+
+        monkeypatch.setattr(mod, "BROWSER_RETRY_BUDGET", 0)
+        crawler = Crawler()
+        fake = AsyncMock()
+        fake.__aenter__.return_value = fake  # async with 拿到的就是它自己
+        fake.arun.side_effect = Exception("net::ERR_TIMED_OUT")
+        with patch("crawl4ai.AsyncWebCrawler", return_value=fake):
+            with pytest.raises(Exception, match="ERR_TIMED_OUT"):
+                run_async(crawler._crawl("https://x.com"))
+
+        assert fake.arun.call_count == 1  # 没有预算就不重试

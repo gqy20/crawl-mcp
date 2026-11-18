@@ -280,6 +280,196 @@ class TestBrowserReuse:
                 await crawler._crawl("https://bad.url")
 
 
+class TestCreateConfigSelectors:
+    """css_selector / excluded_selector / scan_full_page 注入浏览器配置"""
+
+    def test_selector_injected_into_normal_config(self):
+        from crawl4ai_mcp.crawler import Crawler
+
+        config = Crawler()._create_config(
+            css_selector="article", excluded_selector="nav,footer"
+        )
+        assert config.css_selector == "article"
+        assert config.excluded_selector == "nav,footer"
+
+    def test_selector_injected_into_enhanced_config(self):
+        from crawl4ai_mcp.crawler import Crawler
+
+        config = Crawler()._create_config(enhanced=True, css_selector="article")
+        assert config.css_selector == "article"
+        assert config.magic is True
+
+    def test_defaults_keep_config_clean(self):
+        from crawl4ai_mcp.crawler import Crawler
+
+        config = Crawler()._create_config()
+        # crawl4ai 默认 excluded_selector 为空串、css_selector 为 None
+        assert not config.css_selector
+        assert not config.excluded_selector
+        assert config.scan_full_page is False
+
+    def test_scan_full_page_enables_scroll(self):
+        from crawl4ai_mcp.crawler import Crawler
+
+        config = Crawler()._create_config(scan_full_page=True)
+        assert config.scan_full_page is True
+        assert config.scroll_delay == 0.5
+
+
+class TestEnvBrowserConfig:
+    """CRAWL_MCP_COOKIES 环境变量解析（登录态只从环境读，不走工具参数）"""
+
+    def test_unset_returns_none(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        monkeypatch.delenv("CRAWL_MCP_COOKIES", raising=False)
+        assert _env_browser_config() is None
+
+    def test_invalid_json_ignored(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", "{broken")
+        assert _env_browser_config() is None
+
+    def test_non_list_or_missing_fields_ignored(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '{"name": "x"}')
+        assert _env_browser_config() is None
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '[{"name": "x"}]')  # 缺 value
+        assert _env_browser_config() is None
+
+    def test_valid_cookies_return_browser_config(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        monkeypatch.setenv(
+            "CRAWL_MCP_COOKIES",
+            '[{"name": "session", "value": "abc", "domain": ".example.com"}]',
+        )
+        cfg = _env_browser_config()
+        assert cfg is not None
+        assert cfg.cookies == [
+            {"name": "session", "value": "abc", "domain": ".example.com"}
+        ]
+
+    def test_storage_state_file_passed_through(self, monkeypatch, tmp_path):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        state = tmp_path / "state.json"
+        state.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CRAWL_MCP_STORAGE_STATE", str(state))
+        cfg = _env_browser_config()
+        assert cfg is not None
+        assert cfg.storage_state == str(state)
+
+    def test_storage_state_missing_file_ignored(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        monkeypatch.setenv("CRAWL_MCP_STORAGE_STATE", "/nonexistent/state.json")
+        assert _env_browser_config() is None
+
+    def test_cookies_and_storage_state_combine(self, monkeypatch, tmp_path):
+        from crawl4ai_mcp.crawler import _env_browser_config
+
+        state = tmp_path / "state.json"
+        state.write_text("{}", encoding="utf-8")
+        monkeypatch.setenv("CRAWL_MCP_STORAGE_STATE", str(state))
+        monkeypatch.setenv(
+            "CRAWL_MCP_COOKIES",
+            '[{"name": "session", "value": "abc", "domain": ".example.com"}]',
+        )
+        cfg = _env_browser_config()
+        assert cfg is not None
+        assert cfg.cookies and cfg.storage_state
+
+
+class TestAuthFingerprint:
+    """登录态指纹进缓存键：登录态变了，旧正/负缓存不再命中"""
+
+    def test_no_auth_env_gives_empty(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _auth_fingerprint
+
+        monkeypatch.delenv("CRAWL_MCP_COOKIES", raising=False)
+        monkeypatch.delenv("CRAWL_MCP_STORAGE_STATE", raising=False)
+        assert _auth_fingerprint() == ""
+
+    def test_cookie_changes_fingerprint(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _auth_fingerprint
+
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '[{"name": "a", "value": "1"}]')
+        fp1 = _auth_fingerprint()
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '[{"name": "a", "value": "2"}]')
+        fp2 = _auth_fingerprint()
+        assert fp1 and fp2 and fp1 != fp2
+
+    def test_fingerprint_stable_and_no_secret_leak(self, monkeypatch):
+        from crawl4ai_mcp.crawler import _auth_fingerprint
+
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '[{"name": "a", "value": "secret"}]')
+        fp1 = _auth_fingerprint()
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '[{"name": "a", "value": "secret"}]')
+        assert _auth_fingerprint() == fp1
+        assert "secret" not in fp1
+
+    def test_crawl_single_cache_opts_carry_auth(self, monkeypatch):
+        """cache.lookup 收到的 opts 必须带 auth 指纹"""
+        from unittest.mock import patch
+
+        from crawl4ai_mcp.crawler import Crawler
+
+        monkeypatch.setenv("CRAWL_MCP_COOKIES", '[{"name": "a", "value": "1"}]')
+        opts_seen = []
+        with patch("crawl4ai_mcp.crawler.cache") as mock_cache:
+            mock_cache.lookup.return_value = None
+            mock_cache.get.return_value = None
+            with patch.object(
+                Crawler,
+                "_extract",
+                return_value={"success": True, "markdown": "x" * 300, "title": "t"},
+            ):
+                Crawler().crawl_single("https://example.com")
+            for call in mock_cache.lookup.call_args_list:
+                opts_seen.append(call.args[2])
+        assert opts_seen and all(o.get("auth") for o in opts_seen)
+
+
+class TestBrowserLoginWallPostcheck:
+    """浏览器成功结果终检：登录墙壳降为失败（登录态过期/无效）"""
+
+    def test_shell_demoted_to_failure(self):
+        from crawl4ai_mcp.crawler import Crawler
+
+        shell = "Welcome\nPlease log in to continue\nSign up now\nGet started"
+        result = Crawler._postcheck_browser(
+            {"success": True, "markdown": shell, "title": "T", "error": None}
+        )
+        assert result["success"] is False
+        assert result["markdown"] == ""
+        assert "登录" in result["error"]
+
+    def test_real_content_untouched(self):
+        from crawl4ai_mcp.crawler import Crawler
+
+        body = "Article body. " * 100  # 长正文不受影响
+        result = Crawler._postcheck_browser(
+            {"success": True, "markdown": body, "title": "T", "error": None}
+        )
+        assert result["success"] is True
+
+    def test_format_crawl4ai_result_applies_postcheck(self):
+        from unittest.mock import MagicMock
+
+        from crawl4ai_mcp.crawler import Crawler
+
+        raw = MagicMock(
+            success=True,
+            markdown=MagicMock(raw_markdown="Log in\nSign up\nGet started"),
+            metadata={"title": "T"},
+        )
+        out = Crawler._format_crawl4ai_result(raw)
+        assert out["success"] is False
+
+
 # ============================================================
 # 4. crawl_batch — 并行爬取 + LLM 后处理
 # ============================================================
@@ -428,7 +618,13 @@ class TestCrawlBatchV2:
 
 
 class TestCrawlSiteV2:
-    """测试整站深度爬取 — 使用 BFSDeepCrawlStrategy + arun()"""
+    """浏览器 BFS 深爬路径 — BFSDeepCrawlStrategy + arun()
+
+    入口页快速提取失败时 crawl_site 退回这条路径；
+    快速 BFS 路径的测试见 test_crawl_site_fast.py
+    """
+
+    _FAILED_ENTRY = {"success": False, "markdown": "", "title": "", "error": "HTTP 403"}
 
     @pytest.mark.asyncio
     async def test_crawl_site_uses_deep_crawl_strategy(self):
@@ -443,6 +639,7 @@ class TestCrawlSiteV2:
         )
 
         with (
+            patch.object(crawler, "crawl_single", return_value=self._FAILED_ENTRY),
             patch("crawl4ai.BFSDeepCrawlStrategy") as mock_strategy_cls,
             patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
@@ -480,6 +677,7 @@ class TestCrawlSiteV2:
         )
 
         with (
+            patch.object(crawler, "crawl_single", return_value=self._FAILED_ENTRY),
             patch("crawl4ai.BFSDeepCrawlStrategy") as mock_strategy_cls,
             patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):
@@ -514,6 +712,7 @@ class TestCrawlSiteV2:
         )
 
         with (
+            patch.object(crawler, "crawl_single", return_value=self._FAILED_ENTRY),
             patch("crawl4ai.SemaphoreDispatcher") as mock_dispatcher_cls,
             patch("crawl4ai.BFSDeepCrawlStrategy"),
             patch("crawl4ai.AsyncWebCrawler") as mock_cls,
@@ -548,6 +747,7 @@ class TestCrawlSiteV2:
         )
 
         with (
+            patch.object(crawler, "crawl_single", return_value=self._FAILED_ENTRY),
             patch("crawl4ai.BFSDeepCrawlStrategy") as mock_strategy_cls,
             patch("crawl4ai.AsyncWebCrawler") as mock_cls,
         ):

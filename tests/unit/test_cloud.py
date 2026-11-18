@@ -296,7 +296,7 @@ class TestCloudFallbackInCrawler:
             },
         )
 
-        async def fake_crawl(url, enhanced):
+        async def fake_crawl(url, enhanced, **kwargs):
             return {
                 "success": True,
                 "markdown": "# Browser",

@@ -188,7 +188,7 @@ class TestTimeoutMiddlewareIntegration:
         assert middleware in mcp.middleware
 
     def test_server_has_crawl_single_configured(self):
-        """服务器预配置了 crawl_single 的超时（75s，含快速提取+浏览器 fallback）"""
+        """服务器预配置了 crawl_single 的超时（120s，含快速提取+Cloud+浏览器 fallback）"""
         from crawl4ai_mcp.fastmcp_server import mcp
 
         timeout_mw = None
@@ -198,7 +198,7 @@ class TestTimeoutMiddlewareIntegration:
                 break
 
         assert timeout_mw is not None
-        assert timeout_mw.per_tool.get("crawl_single") == 75
+        assert timeout_mw.per_tool.get("crawl_single") == 120
 
     def test_server_default_timeout_is_60s(self):
         """服务器默认超时为 60 秒"""

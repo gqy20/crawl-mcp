@@ -4,7 +4,7 @@
     crawl <url>                # 单页，Markdown 打到 stdout
     crawl <url1> <url2> ...    # 多 URL 并行批量，输出 JSON
     crawl --browser <url>      # 强制浏览器渲染（跳过快速提取）
-    crawl site <url>           # 站内递归爬取（浏览器 + BFS），输出 JSON
+    crawl site <url>           # 站内递归爬取（快速 BFS 优先），输出 JSON
     crawl search <query>       # 网页搜索，只返回摘要和链接
     crawl search --news <query>  # 新闻搜索（--books / --videos 同理）
     crawl images <query> --download  # 图片搜索+下载，输出本地路径供多模态模型查看
@@ -58,6 +58,19 @@ def _crawl(argv):
     parser.add_argument(
         "--quiet", action="store_true", help="不打印浏览器进度日志（只留错误）"
     )
+    sel = parser.add_argument_group("正文范围（只在浏览器路径生效）")
+    sel.add_argument(
+        "--css", help="只提取匹配元素内的正文，如 article / #content"
+    )
+    sel.add_argument(
+        "--exclude-css",
+        help="排除匹配的元素（逗号分隔），如 nav,footer,aside",
+    )
+    sel.add_argument(
+        "--full-page",
+        action="store_true",
+        help="滚动加载整页再提取（无限滚动/长列表页）",
+    )
     args = parser.parse_args(argv)
 
     from crawl4ai_mcp.crawler import Crawler
@@ -72,7 +85,13 @@ def _crawl(argv):
     # --quiet 时连 stderr 也不刷，只留失败信息
     if len(args.urls) == 1:
         with redirect_stdout(open(os.devnull, "w") if args.quiet else sys.stderr):
-            result = crawler.crawl_single(args.urls[0], prefer_fast=prefer_fast)
+            result = crawler.crawl_single(
+                args.urls[0],
+                prefer_fast=prefer_fast,
+                css_selector=args.css,
+                excluded_selector=args.exclude_css,
+                scan_full_page=args.full_page,
+            )
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         elif result["success"]:
@@ -83,7 +102,12 @@ def _crawl(argv):
 
     # 多 URL：Markdown 混排有歧义，统一输出 JSON
     with redirect_stdout(open(os.devnull, "w") if args.quiet else sys.stderr):
-        results = crawler.crawl_batch(args.urls, prefer_fast=prefer_fast)
+        results = crawler.crawl_batch(
+            args.urls,
+            prefer_fast=prefer_fast,
+            css_selector=args.css,
+            excluded_selector=args.exclude_css,
+        )
     print(json.dumps(results, ensure_ascii=False, indent=2))
     return 0 if all(r["success"] for r in results) else 1
 
@@ -118,17 +142,23 @@ def _crawl_cloud(crawler, args):
 
 def _site(argv):
     parser = argparse.ArgumentParser(
-        prog="crawl site", description="从入口页递归爬取站内页面（浏览器 + BFS）"
+        prog="crawl site",
+        description="从入口页递归爬取站内页面（快速 BFS 优先，SPA 退回浏览器）",
     )
     parser.add_argument("url", help="起始 URL")
     parser.add_argument("--depth", type=int, default=2, help="最大链接深度（默认 2）")
     parser.add_argument("--pages", type=int, default=10, help="最大页面数（默认 10）")
+    parser.add_argument(
+        "--concurrent", type=int, default=3, help="并发爬取数（默认 3）"
+    )
     args = parser.parse_args(argv)
 
     from crawl4ai_mcp.crawler import Crawler
 
     with redirect_stdout(sys.stderr):
-        result = Crawler().crawl_site(args.url, depth=args.depth, pages=args.pages)
+        result = Crawler().crawl_site(
+            args.url, depth=args.depth, pages=args.pages, concurrent=args.concurrent
+        )
     # 多页结果与批量同理，统一 JSON
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["successful_pages"] == result["total_pages"] else 1
@@ -245,6 +275,97 @@ def _images(argv):
     return 0
 
 
+def _auth(argv):
+    parser = argparse.ArgumentParser(
+        prog="crawl auth",
+        description="登录态管理（~/.crawl_mcp/auth/，每站点一个 storage_state 文件）",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+    sub.add_parser("list", help="列出已配置的登录态（域名/cookie 数/更新时间）")
+
+    p_check = sub.add_parser("check", help="验证登录态是否有效（对登录后页面发真实请求）")
+    p_check.add_argument("name", help="登录态名称（文件名去 .json）")
+    p_check.add_argument(
+        "--url", required=True, help="一个登录后才能看的页面 URL，用于探测"
+    )
+
+    p_imp = sub.add_parser("import", help="从本地已登录浏览器导入 cookie")
+    p_imp.add_argument(
+        "--from",
+        dest="browser",
+        required=True,
+        choices=["chrome", "chromium", "firefox"],
+        help="浏览器（chrome 的 v11 加密需解锁 keyring）",
+    )
+    p_imp.add_argument(
+        "--site",
+        action="append",
+        help="只导这些站点（子串匹配，可重复，如 --site zhihu --site github）",
+    )
+    args = parser.parse_args(argv)
+
+    import logging
+
+    logging.basicConfig(level=logging.WARNING, format="%(message)s")
+    from crawl4ai_mcp import auth_store
+
+    if args.action == "list":
+        auths = auth_store.list_auths()
+        if not auths:
+            print(f"登录态目录为空: {auth_store.auth_dir()}")
+            print("导入: crawl auth import --from chrome --site <域名>")
+            return 0
+        import time as _time
+
+        print(f"{'名称':16} {'cookie':>6}  {'更新时间':16} 域名")
+        for a in auths:
+            if "error" in a:
+                print(f"{a['name']:16} [损坏] {a['error']}")
+                continue
+            when = _time.strftime("%Y-%m-%d %H:%M", _time.localtime(a["mtime"]))
+            print(
+                f"{a['name']:16} {a['cookies']:>6}  {when:16} "
+                f"{','.join(a['domains'][:4])}{'…' if len(a['domains']) > 4 else ''}"
+            )
+        return 0
+
+    if args.action == "check":
+        path = auth_store.auth_dir() / f"{args.name}.json"
+        if not path.is_file():
+            print(f"没有这个登录态: {path}", file=sys.stderr)
+            return 1
+        # 临时把该文件作为全局登录态注入（CLI 是一次性进程，改 env 无妨）
+        os.environ["CRAWL_MCP_STORAGE_STATE"] = str(path)
+        from crawl4ai_mcp import cache
+        from crawl4ai_mcp.crawler import Crawler
+
+        cache.clear()
+        print(f"探测 {args.url} …", file=sys.stderr)
+        result = Crawler().crawl_single(args.url, prefer_fast=False)
+        code = result.get("error_code")
+        if result.get("success"):
+            print(f"{args.name}: 有效 ✓ ({len(result.get('markdown') or '')} 字正文)")
+            return 0
+        if code == "login_wall":
+            print(f"{args.name}: 已失效（登录墙）✗ —— 重新导入或重新导出 storage_state")
+            return 1
+        print(f"{args.name}: 探测失败（{code or result.get('error')}），无法判定")
+        return 1
+
+    # import
+    summary = auth_store.import_from_browser(args.browser, args.site)
+    if not summary["imported"]:
+        print(
+            f"没有导入任何登录态：{summary.get('reason') or '没有匹配的 cookie'}",
+            file=sys.stderr,
+        )
+        return 1
+    for f in summary["files"]:
+        print(f"已导入 {f['site']:20} {f['cookies']:>4} cookies → {f['path']}")
+    print(f"共 {summary['imported']} 个站点。注意：文件是明文登录态，保管好目录权限。")
+    return 0
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
 
@@ -258,6 +379,8 @@ def main(argv=None):
         return _site(argv[1:])
     if argv and argv[0] == "images":
         return _images(argv[1:])
+    if argv and argv[0] == "auth":
+        return _auth(argv[1:])
     return _crawl(argv)
 
 

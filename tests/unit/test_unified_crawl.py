@@ -478,7 +478,9 @@ class TestUnifiedCrawlBatch:
 
             results = crawler.crawl_batch(urls)
 
-        mock_browser.assert_awaited_once_with(urls, [False, True], 3)
+        mock_browser.assert_awaited_once_with(
+            urls, [False, True], 3, css_selector=None, excluded_selector=None
+        )
         assert [r["method"] for r in results] == [
             "browser_fallback",
             "browser_fallback",

@@ -1,0 +1,248 @@
+# bench 数据集 —— 改这里就够了，不用动 scripts/bench.py
+#
+# 爬取用例字段：
+#   group: 渠道分组（表格按它聚合）
+#   url:   目标 URL
+#   expect: null          → 期望成功，正文 ≥ 200 字
+#          "http_404"     → 期望失败，error_code 匹配（已知问题站点的回归用例）
+#          ["a", "b"]     → 期望失败，error_code 命中其一
+#   expect_text: "短语"   → 成功时正文必须包含该短语（可给列表）。
+#                          只看字数会漏「抓到了但抓错了」，选稳定出现在正文的
+#                          关键词（产品名/核心技术词），列表页/内容每天变的别配
+#
+# 用例类型对照公开 benchmark 的网站池：学术/政府/代码/工具文档（TRACE、WCEB），
+# 电商/论坛/新闻/SaaS/招聘（WCXB 七类页面、TRACE 九大类）——都是他们点名测的类别。
+#
+# quick 里的用例每次 pre-commit / 会话结束都会跑（保持精简、偏快）；
+# full_extra 只在 --full 时追加。
+# 已知问题用例不是要跑通，而是要保证「失败得对」——error_code 变了就是判定逻辑退化。
+
+quick:
+  - group: 政府-国务院政策
+    url: https://www.gov.cn/zhengce/zhengceku/202307/content_6891752.htm
+    expect: null
+  - group: 政府-上海政务
+    url: https://www.shanghai.gov.cn/nw12344/index.html
+    expect: null
+  - group: 标准-TC260
+    url: https://www.tc260.org.cn/front/bzzqyjList.html
+    expect: null
+  - group: 学术-PLOS
+    url: https://dx.plos.org/10.1371/journal.pgen.1003905
+    expect: null
+  - group: 学术-PubMed
+    url: https://pubmed.ncbi.nlm.nih.gov/38988617/
+    expect: null
+  - group: 学术-Wiley
+    url: https://onlinelibrary.wiley.com/doi/10.1111/mec.70167
+    expect: null
+  - group: 代码-GitHub raw
+    url: https://raw.githubusercontent.com/langchain-ai/deepagents/main/README.md
+    expect: null
+  - group: 工具文档-Claude Code   # 高频日常站：fast 路径回归保护（理应秒开）
+    url: https://code.claude.com/docs/en/memory.md
+    expect: null
+  # ── 以下补齐公开 benchmark（WCXB/TRACE）点名的页面类型 ──
+  # 论坛：HN 是表格布局老站，导航/正文混排，正文提取的真实难点
+  - group: 论坛-Hacker News 帖子
+    url: https://news.ycombinator.com/item?id=18394952
+    expect: null
+  - group: 电商-Apple 商品页
+    url: https://www.apple.com/airpods-pro/
+    expect: null
+    expect_text: "AirPods"
+  - group: SaaS-Anthropic 首页
+    url: https://www.anthropic.com/
+    expect: null
+    expect_text: "Claude"
+  # 视频页：Bilibili fast 拿到标题/播放数/简介（YouTube watch 页 fast 只有页脚，是已知限制）
+  - group: 视频-Bilibili
+    url: https://www.bilibili.com/video/BV1GJ411x7h7
+    expect: null
+    expect_text: "Never Gonna Give You Up"
+  # 流媒体：信息在 JSON-LD 结构化数据里，fast 直接拿全
+  - group: 流媒体-Spotify
+    url: https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT
+    expect: null
+    expect_text: "Rick Astley"
+  - group: 已知问题-中科院空模板
+    url: https://www.cas.cn/tzgg/
+    expect: empty_content
+  # 快速提取直接拿到 HTTP 404 → 终止错误，跳过整条降级链路
+  - group: 已知问题-网信办失效页
+    url: https://www.cac.gov.cn/xxgk/
+    expect: ["http_404", "js_challenge"]
+  # Hetzner 定价页已迁移，真实 404（历史会话访问 4 次，2026-11 复现）
+  - group: 已知问题-Hetzner定价迁移
+    url: https://docs.hetzner.com/cloud/general/pricing/
+    expect: http_404
+
+full_extra:
+  - group: 学术-EuropePMC
+    url: https://europepmc.org/article/MED/12939634
+    expect: null
+  - group: 学术-SciDirect
+    url: https://www.sciencedirect.com/science/article/pii/S1055790306003241
+    expect: null
+  - group: 学术-biorxiv
+    url: https://www.biorxiv.org/
+    expect: null
+  - group: 学术-DOI 元数据
+    url: https://api.crossref.org/works/10.1093/bioinformatics/btab468
+    expect: null
+  - group: 学术-DOI 跳转
+    url: https://doi.org/10.1093/bioinformatics/btab468
+    expect: null
+  - group: 政府-国新办
+    url: https://www.scio.gov.cn/zhixing/
+    expect: null
+  - group: 政府-中科院首页
+    url: https://www.cas.cn/
+    expect: null
+  - group: 政府-网信办栏目
+    url: https://www.cac.gov.cn/yaowen/wxyw/A093602index_1.htm
+    expect: null
+  - group: JS 壳-Springer
+    url: https://link.springer.com/protocol/10.1007/978-1-0716-1134-0_11
+    expect: null
+  - group: 代码-GitHub API
+    url: https://api.github.com/repos/langchain-ai/deepagents/contents
+    expect: null
+  - group: 代码-GitHub docs
+    url: https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions
+    expect: null
+  - group: 公众号
+    url: https://mp.weixin.qq.com/s/JLTAxHjqlkpGbfOcDWDAvw
+    expect: null
+  # ── 以下来自 ~/.claude / ~/.codex 会话日志的高频站（2026-11 挖掘）──
+  # agent 工具文档是日常爬取大头：全部理应 fast 秒开，作 fast 路径回归保护
+  - group: 工具文档-Cursor
+    url: https://cursor.com/docs/context/rules
+    expect: null
+  - group: 工具文档-LangChain
+    url: https://docs.langchain.com/oss/python/langgraph/interrupts
+    expect: null
+  - group: 工具文档-MiniMax
+    url: https://platform.minimaxi.com/docs/api-reference/speech-t2a-http
+    expect: null
+  # GitHub issues 列表页（动态列表，实测 fast 1.2s 可拿）
+  - group: 代码-GitHub issues
+    url: https://github.com/rachelos/we-mp-rss/issues
+    expect: null
+  # 云定价页（动态表格 + 多币种切换）
+  - group: 云定价-AWS
+    url: https://aws.amazon.com/lightsail/pricing/
+    expect: null
+  # 中文科技资讯
+  - group: 中文资讯-decohack
+    url: https://decohack.com/ai-daily
+    expect: null
+  # JSON 端点走同一条 markdown 管道
+  - group: JSON-npm registry
+    url: https://registry.npmjs.org/pnpm/latest
+    expect: null
+  # ── WCXB/TRACE 点名的其余页面类型（--full 才跑，部分走 Cloud 较慢）──
+  # 论坛问答：经典问题页，正文含大量代码块
+  - group: 论坛-StackOverflow
+    url: https://stackoverflow.com/questions/231767/what-does-the-yield-keyword-do-in-python
+    expect: null
+    expect_text: "yield"
+  # 电商商品页：描述在 JSON-LD 而非可见 DOM（WCXB 点名的坑）
+  - group: 电商-树莓派商品页
+    url: https://www.raspberrypi.com/products/raspberry-pi-5/
+    expect: null
+    expect_text: "Raspberry Pi 5"
+  - group: 新闻-BBC 栏目
+    url: https://www.bbc.com/news
+    expect: null
+  - group: 新闻-NPR 栏目
+    url: https://www.npr.org/sections/news/
+    expect: null
+  # 招聘列表页（TRACE 用 Stripe/Anthropic 的 careers）
+  - group: 招聘-Greenhouse
+    url: https://boards.greenhouse.io/anthropic
+    expect: null
+  - group: 招聘-Stripe jobs
+    url: https://stripe.com/jobs/search
+    expect: null
+  # AI 实验室站 + 登录墙回归：匿名只能拿到空画廊壳（312 字），
+  # 识别后降级浏览器渲染出真实首页（~2000 字）
+  - group: AI 实验室-z.ai 登录墙
+    url: https://z.ai/
+    expect: null
+    expect_text: "Create anything"
+  # ── 渠道拓宽：百科/财经/医疗/旅游/云定价/开发者社区 ──
+  # 大页：23 万字词条，压正文清洗管道
+  - group: 百科-Wikipedia EN
+    url: https://en.wikipedia.org/wiki/Python_(programming_language)
+    expect: null
+    expect_text: "programming language"
+  # 财经动态页：报价在客户端渲染，fast 拿的是页面其余结构
+  - group: 财经-CoinMarketCap
+    url: https://coinmarketcap.com/currencies/bitcoin/
+    expect: null
+    expect_text: "Bitcoin"
+  - group: 医疗-Mayo Clinic
+    url: https://www.mayoclinic.org/diseases-conditions/influenza/symptoms-causes/syc-20351719
+    expect: null
+    expect_text: "Influenza"
+  # 反爬名声在外但 ddgs 出口能拿到（16 万字景点列表）
+  - group: 旅游-TripAdvisor
+    url: https://www.tripadvisor.com/Attractions-g60763-New_York_City_New_York-Vacations.html
+    expect: null
+    expect_text: "New York"
+  - group: 云定价-GCP
+    url: https://cloud.google.com/pricing
+    expect: null
+    expect_text: "Google Cloud"
+  - group: 开发者-dev.to
+    url: https://dev.to/
+    expect: null
+    expect_text: "DEV Community"
+  # 中文重站：fast 失败走浏览器（~20s）
+  - group: 百科-百度百科
+    url: https://baike.baidu.com/item/网络爬虫
+    expect: null
+    expect_text: "爬虫"
+  - group: 文档平台-语雀
+    url: https://www.yuque.com/
+    expect: null
+  # 知乎全站反爬（登录墙+验证码）：失败得对就是胜利
+  - group: 已知问题-知乎反爬
+    url: https://www.zhihu.com/question/19550227
+    expect: antibot
+
+# 站内爬取用例（crawl_site 快速 BFS）：字段 group/url/depth/pages
+# 判定：成功页 ≥ 3 算符合预期（入口失败/只拿到入口一页都算退化）
+sites:
+  - group: 工具文档-Python docs
+    url: https://docs.python.org/3/library/asyncio.html
+    depth: 1
+    pages: 5
+  # 多层 BFS：第 2 层从已爬页的 Markdown 里继续发现链接
+  - group: 工具文档-Python docs 多层
+    url: https://docs.python.org/3/library/asyncio.html
+    depth: 2
+    pages: 10
+
+# 搜索 query：(kind, query, region)
+queries:
+  - kind: 政策-中文
+    query: 生成式人工智能 管理办法 网信办
+    region: cn-zh
+  - kind: 政策-通用
+    query: 政策文件 规范性文件 发布
+    region: cn-zh
+  - kind: 学术-中文
+    query: 锥栗 花期 物候 中国
+    region: cn-zh
+  - kind: 学术-英文
+    query: Castanea henryi flowering time
+    region: wt-wt
+  - kind: 工具-英文
+    query: deepagents OpenShell sandbox backend
+    region: wt-wt
+  # 高频主题：agent 配置约定（历史 query 聚类）
+  - kind: agent配置-英文
+    query: AGENTS.md CLAUDE.md cursor rules convention
+    region: wt-wt

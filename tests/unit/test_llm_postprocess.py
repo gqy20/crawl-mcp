@@ -94,7 +94,7 @@ class TestCrawlSingleWithPostProcess:
         """测试不使用 LLM 时，crawl_single 快速返回"""
         crawler = Crawler()
 
-        async def mock_crawl_impl(url, enhanced, llm_config=None):
+        async def mock_crawl_impl(url, enhanced, llm_config=None, **kwargs):
             return {
                 "success": True,
                 "markdown": "# Example\n\nContent",
@@ -114,7 +114,7 @@ class TestCrawlSingleWithPostProcess:
         crawler = Crawler()
         markdown_content = "# Example\n\nPage content here"
 
-        async def mock_crawl_impl(url, enhanced, llm_config=None):
+        async def mock_crawl_impl(url, enhanced, llm_config=None, **kwargs):
             return {
                 "success": True,
                 "markdown": markdown_content,

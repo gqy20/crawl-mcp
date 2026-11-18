@@ -119,6 +119,60 @@ class TestSearchWrapper:
         assert pools == [None, "brave,startpage", "duckduckgo,mojeek"]
 
 
+class TestSearchDedupe:
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_duplicate_hrefs_deduped_keeping_order(self, mock_ddgs_class):
+        """ddgs 偶尔返回重复 href，去重且保持原顺序"""
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.return_value = iter(
+            [
+                {"title": "A", "href": "https://x.com"},
+                {"title": "A2", "href": "https://x.com"},
+                {"title": "B", "href": "https://y.com"},
+            ]
+        )
+
+        result = Searcher()._search_wrapper(lambda ddgs, **kw: ddgs.text(**kw), "q")
+
+        assert result["count"] == 2
+        assert [r["title"] for r in result["results"]] == ["A", "B"]
+
+
+class TestSearchTimeouts:
+    """单次请求超时 + 降级链总预算"""
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_ddgs_gets_per_request_timeout(self, mock_ddgs_class):
+        from crawl4ai_mcp import searcher
+
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.return_value = iter([{"title": "T"}])
+
+        Searcher()._search_wrapper(lambda ddgs, **kw: ddgs.text(**kw), "q")
+
+        mock_ddgs_class.assert_called_with(timeout=searcher.SEARCH_TIMEOUT)
+
+    @patch("crawl4ai_mcp.searcher.DDGS")
+    def test_total_budget_stops_further_pools(self, mock_ddgs_class, monkeypatch):
+        """总预算用尽后不再换池重试，带着已有错误返回"""
+        from crawl4ai_mcp import searcher
+
+        monkeypatch.setattr(searcher, "SEARCH_BUDGET", 0)
+        mock_ddgs = MagicMock()
+        mock_ddgs_class.return_value = mock_ddgs
+        mock_ddgs.text.side_effect = [
+            DDGSException("No results found."),
+            iter([{"title": "T"}]),
+        ]
+
+        result = Searcher()._search_wrapper(lambda ddgs, **kw: ddgs.text(**kw), "q")
+
+        assert result["success"] is False
+        assert mock_ddgs.text.call_count == 1  # 第一轮必跑，之后被预算闸住
+
+
 class TestBackendPools:
     """降级池必须用 ddgs 真实注册的引擎名"""
 

@@ -26,7 +26,11 @@ class TestCrawlCli:
             cls.return_value.crawl_single.return_value = _result()
             assert main(["https://example.com"]) == 0
             cls.return_value.crawl_single.assert_called_once_with(
-                "https://example.com", prefer_fast=True
+                "https://example.com",
+                prefer_fast=True,
+                css_selector=None,
+                excluded_selector=None,
+                scan_full_page=False,
             )
         assert capsys.readouterr().out.strip() == "# hello"
 
@@ -84,7 +88,11 @@ class TestCrawlCli:
             cls.return_value.crawl_single.return_value = _result()
             assert main(["--browser", "https://example.com"]) == 0
             cls.return_value.crawl_single.assert_called_once_with(
-                "https://example.com", prefer_fast=False
+                "https://example.com",
+                prefer_fast=False,
+                css_selector=None,
+                excluded_selector=None,
+                scan_full_page=False,
             )
 
     def test_single_json_output(self, capsys):
@@ -103,7 +111,12 @@ class TestCrawlCli:
         with patch("crawl4ai_mcp.crawler.Crawler") as cls:
             cls.return_value.crawl_batch.return_value = [_result(), _result()]
             assert main(urls) == 0
-            cls.return_value.crawl_batch.assert_called_once_with(urls, prefer_fast=True)
+            cls.return_value.crawl_batch.assert_called_once_with(
+                urls,
+                prefer_fast=True,
+                css_selector=None,
+                excluded_selector=None,
+            )
         assert len(json.loads(capsys.readouterr().out)) == 2
 
     def test_batch_partial_failure_exit_1(self, capsys):
@@ -114,6 +127,98 @@ class TestCrawlCli:
             ]
             assert main(["https://a.com", "https://b.com"]) == 1
         assert len(json.loads(capsys.readouterr().out)) == 2
+
+    def test_css_flags_forwarded_single(self):
+        """--css/--exclude-css/--full-page 透传到 crawl_single"""
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls:
+            cls.return_value.crawl_single.return_value = _result()
+            assert (
+                main(
+                    [
+                        "--css",
+                        "article",
+                        "--exclude-css",
+                        "nav,footer",
+                        "--full-page",
+                        "https://example.com",
+                    ]
+                )
+                == 0
+            )
+        cls.return_value.crawl_single.assert_called_once_with(
+            "https://example.com",
+            prefer_fast=True,
+            css_selector="article",
+            excluded_selector="nav,footer",
+            scan_full_page=True,
+        )
+
+    def test_css_flags_forwarded_batch(self):
+        """批量模式透传两个选择器参数（scan_full_page 不进批量）"""
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls:
+            cls.return_value.crawl_batch.return_value = [_result(), _result()]
+            assert main(["--css", "article", "https://a.com", "https://b.com"]) == 0
+        cls.return_value.crawl_batch.assert_called_once_with(
+            ["https://a.com", "https://b.com"],
+            prefer_fast=True,
+            css_selector="article",
+            excluded_selector=None,
+        )
+
+
+class TestAuthCli:
+    def test_list_empty_dir_hints_import(self, capsys, monkeypatch, tmp_path):
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(tmp_path / "auth"))
+        assert main(["auth", "list"]) == 0
+        assert "为空" in capsys.readouterr().out
+
+    def test_list_shows_entries(self, capsys, monkeypatch, tmp_path):
+        d = tmp_path / "auth"
+        d.mkdir()
+        (d / "example.json").write_text(
+            json.dumps(
+                {"cookies": [{"name": "a", "value": "1", "domain": ".example.com"}],
+                 "origins": []}
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
+        assert main(["auth", "list"]) == 0
+        out = capsys.readouterr().out
+        assert "example" in out and "example.com" in out
+
+    def test_check_missing_file_exits_1(self, monkeypatch, tmp_path, capsys):
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(tmp_path / "auth"))
+        assert main(["auth", "check", "nope", "--url", "https://x.com"]) == 1
+        assert "没有这个登录态" in capsys.readouterr().err
+
+    def test_check_reports_valid(self, monkeypatch, tmp_path, capsys):
+        d = tmp_path / "auth"
+        d.mkdir()
+        (d / "example.json").write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls, patch(
+            "crawl4ai_mcp.cache.clear"
+        ):
+            cls.return_value.crawl_single.return_value = _result(
+                markdown="x" * 500
+            )
+            assert main(["auth", "check", "example", "--url", "https://x.com/me"]) == 0
+        assert "有效" in capsys.readouterr().out
+
+    def test_check_reports_login_wall(self, monkeypatch, tmp_path, capsys):
+        d = tmp_path / "auth"
+        d.mkdir()
+        (d / "example.json").write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+        monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls, patch(
+            "crawl4ai_mcp.cache.clear"
+        ):
+            cls.return_value.crawl_single.return_value = _result(
+                success=False, markdown="", error="x", error_code="login_wall"
+            )
+            assert main(["auth", "check", "example", "--url", "https://x.com/me"]) == 1
+        assert "失效" in capsys.readouterr().out
 
 
 class TestSearchCli:
@@ -183,7 +288,7 @@ class TestSiteCli:
             }
             assert main(["site", "https://x.com", "--depth", "1", "--pages", "2"]) == 0
             cls.return_value.crawl_site.assert_called_once_with(
-                "https://x.com", depth=1, pages=2
+                "https://x.com", depth=1, pages=2, concurrent=3
             )
         assert json.loads(capsys.readouterr().out)["total_pages"] == 2
 
@@ -197,6 +302,19 @@ class TestSiteCli:
             }
             assert main(["site", "https://x.com"]) == 1
         assert json.loads(capsys.readouterr().out)["successful_pages"] == 1
+
+    def test_site_concurrent_flag(self, capsys):
+        with patch("crawl4ai_mcp.crawler.Crawler") as cls:
+            cls.return_value.crawl_site.return_value = {
+                "successful_pages": 2,
+                "total_pages": 2,
+                "success_rate": "100.0%",
+                "results": [],
+            }
+            assert main(["site", "https://x.com", "--concurrent", "5"]) == 0
+            cls.return_value.crawl_site.assert_called_once_with(
+                "https://x.com", depth=2, pages=10, concurrent=5
+            )
 
 
 class TestImagesCli:

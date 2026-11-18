@@ -255,8 +255,9 @@ def _keep(by_site: dict, cookie: dict, sites: list[str] | None) -> None:
     site = _registrable(domain)
     if not site or (sites and not any(s in site or site in s for s in sites)):
         return
-    if cookie.get("expires", -1) != -1 and cookie["expires"] < _now():
-        return  # 过期 cookie 不导
+    expires = cookie.get("expires", -1)
+    if expires is not None and expires != -1 and expires < _now():
+        return  # 过期 cookie 不导（None/-1 视为会话 cookie，保留）
     by_site.setdefault(site, []).append(cookie)
 
 
@@ -337,6 +338,9 @@ def _decrypt_chrome(blob: bytes, keyring_password: bytes | None) -> str | None:
         return None
 
 
+_ROOKIE_FAILED = object()  # rookie 装了但没读出来（区别于未安装的 None）
+
+
 def import_from_browser(browser: str, sites: list[str] | None = None) -> dict:
     """从本地浏览器导入 cookie 到登录态目录，返回摘要。
 
@@ -346,6 +350,9 @@ def import_from_browser(browser: str, sites: list[str] | None = None) -> dict:
     装了 rookie-cookies（pip install rookie-cookies，Rust 核心）时优先用它——
     覆盖 KWallet、Windows v20 ABE、Edge/Brave 等更多浏览器；未安装或读取失败
     回落到本模块内置实现（sqlite + v10/v11 解密）。
+
+    浏览器开着时活跃 profile 的库可能被进程锁住：此时逐 profile 尽力导入
+    （跳过被锁的），关闭浏览器后重试可全量导入。
     """
     if browser not in BROWSERS:
         raise ValueError(f"不支持的浏览器 {browser!r}，可选: {', '.join(BROWSERS)}")
@@ -366,6 +373,23 @@ def import_from_browser(browser: str, sites: list[str] | None = None) -> dict:
         by_site = (
             _import_firefox(sites) if browser == "firefox" else _import_chrome(sites)
         )
+    elif by_site is _ROOKIE_FAILED:
+        # 装了 rookie 但没读出来：keyring 锁定、或 profile 库全被运行中的浏览器锁住
+        if sys.platform in ("linux", "linux2"):
+            by_site = (
+                _import_firefox(sites)
+                if browser == "firefox"
+                else _import_chrome(sites)
+            )
+        else:
+            return {
+                "imported": 0,
+                "files": [],
+                "reason": (
+                    "rookie-cookies 读取失败（典型：浏览器正在运行锁住 profile 库，"
+                    "或 keyring 锁定）；关闭浏览器后重试，或用 playwright codegen 导出"
+                ),
+            }
     if not by_site:
         return {"imported": 0, "files": [], "reason": "没有读到任何可用 cookie"}
 
@@ -395,19 +419,49 @@ def _try_rookie(browser: str, sites: list[str] | None) -> dict[str, list[dict]] 
     except ImportError:
         return None
     try:
-        # 0.6 的 read() 无域名过滤（extract 尚未随 wheel 发布），--site 在 _keep 侧过滤；
+        # read() 无域名过滤，--site 在 _keep 侧过滤；
         # keyring 锁定时 Rust 侧逐条重试密钥后端会慢，但该场景最终异常回落内置实现
         rows = rc.read(browser=browser).as_list()
     except Exception as e:
-        # 典型：Linux Chrome v11 且 login keyring 锁定（Secret Service 搜不到条目）
-        logger.warning("rookie-cookies 读取失败，回落内置实现: %s", str(e)[:300])
-        return None
+        # 典型一：Linux Chrome v11 且 login keyring 锁定（Secret Service 搜不到条目）
+        # 典型二：Windows/macOS 浏览器正在运行，活跃 profile 的 SQLite 被进程独占
+        #   （OS error 32）——逐 profile 重试，跳过被锁的，能读多少读多少
+        rows = _rookie_read_per_profile(rc, browser)
+        if rows is None:
+            logger.warning("rookie-cookies 读取失败，回落内置实现: %s", str(e)[:300])
+            return _ROOKIE_FAILED
     by_site: dict[str, list[dict]] = {}
     for c in rows:
         cookie = _rookie_cookie(c)
         if cookie:
             _keep(by_site, cookie, sites)
     return by_site
+
+
+def _rookie_read_per_profile(rc, browser: str) -> list | None:
+    """read() 整体失败后逐 profile 重试，跳过被浏览器锁住的活跃 profile。
+
+    返回聚合的 cookie 行；一个 profile 都读不出来返回 None（由调用方回落内置）。
+    """
+    try:
+        profs = rc.profiles(browser)
+    except Exception as e:
+        logger.warning("rookie-cookies 枚举 profile 失败: %s", str(e)[:200])
+        return None
+    rows: list = []
+    for p in profs:
+        meta = p.get("profile", {}) if isinstance(p, dict) else {}
+        pid = meta.get("profile_id")
+        label = meta.get("display_name") or Path(str(meta.get("path", ""))).name or "?"
+        try:
+            rows.extend(rc.read(browser=browser, profile=pid).as_list())
+        except Exception as e:
+            logger.warning(
+                "profile %r 被锁或读取失败，跳过（关闭浏览器后重试可导入该 profile）: %s",
+                label,
+                str(e)[:200],
+            )
+    return rows or None
 
 
 _SAMESITE_MAP = {
@@ -420,17 +474,23 @@ _SAMESITE_MAP = {
 
 
 def _rookie_cookie(c: dict) -> dict | None:
-    """rookie 输出（playwright 风格 dict）→ storage_state cookie，字段宽松映射"""
+    """rookie 输出 → storage_state cookie，字段宽松映射。
+
+    rookie 0.6 实测键名是蛇形（http_only/same_site），早先版本是驼峰，两种都认。
+    """
     if not c.get("name") or "value" not in c or not c.get("domain"):
         return None
-    raw_ss = str(c.get("sameSite") or "").lower()
+    raw_ss = str(c.get("sameSite") or c.get("same_site") or "").lower()
+    # 会话 cookie 的 expires 可能是 None（键存在但值为空），归一成 -1，
+    # 否则 _keep 里 None < float 会 TypeError
+    expires = c.get("expires")
     return {
         "name": c["name"],
         "value": c["value"],
         "domain": c["domain"],
         "path": c.get("path") or "/",
-        "expires": c.get("expires", -1),
+        "expires": -1 if expires is None else expires,
         "secure": bool(c.get("secure")),
-        "httpOnly": bool(c.get("httpOnly")),
+        "httpOnly": bool(c.get("httpOnly", c.get("http_only", False))),
         "sameSite": _SAMESITE_MAP.get(raw_ss, "Lax"),
     }

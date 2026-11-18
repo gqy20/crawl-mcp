@@ -201,6 +201,8 @@ class TestRookieEngine:
         assert "reason" not in auth_store.import_from_browser("chrome") or True
 
     def test_rookie_failure_falls_back(self, monkeypatch, auth_dir):
+        # 回落内置实现的分支只在 Linux 存在，钉住平台使测试跨平台稳定
+        monkeypatch.setattr(sys, "platform", "linux")
         self._fake_rookie(
             monkeypatch, error=RuntimeError("ProviderFailed: keyring 锁定")
         )
@@ -216,8 +218,139 @@ class TestRookieEngine:
         assert c["sameSite"] == "Lax" and c["expires"] == -1
         assert auth_store._rookie_cookie({"name": "a", "value": "1"}) is None
 
+    def test_rookie_snake_case_fields_mapped(self):
+        """rookie 0.6 实测输出蛇形键（http_only/same_site），不能丢 httpOnly"""
+        c = auth_store._rookie_cookie(
+            {
+                "name": "a",
+                "value": "1",
+                "domain": ".b.com",
+                "http_only": True,
+                "same_site": "strict",
+            }
+        )
+        assert c["httpOnly"] is True
+        assert c["sameSite"] == "Strict"
+        # 驼峰（早先版本形状）仍然兼容
+        c2 = auth_store._rookie_cookie(
+            {
+                "name": "a",
+                "value": "1",
+                "domain": ".b.com",
+                "httpOnly": True,
+                "sameSite": "no_restriction",
+            }
+        )
+        assert c2["httpOnly"] is True and c2["sameSite"] == "None"
+
+    def test_rookie_session_cookie_none_expires(self, monkeypatch, auth_dir):
+        """会话 cookie 的 expires 为 None（键存在值为空）→ 归一 -1，
+        不能在 _keep 里 None < float 崩掉（全量导入真实数据才暴露）"""
+        self._fake_rookie(
+            monkeypatch,
+            rows=[
+                {"name": "s", "value": "v", "domain": ".zhihu.com", "expires": None},
+            ],
+        )
+        summary = auth_store.import_from_browser("chrome")
+        assert summary["imported"] == 1
+        cookie = json.loads((auth_dir / "zhihu.com.json").read_text())["cookies"][0]
+        assert cookie["expires"] == -1
+
+    def test_rookie_locked_profile_reads_others(self, monkeypatch, auth_dir):
+        """read() 整体撞锁（Windows 浏览器运行中，OS error 32）→ 逐 profile
+        重试，跳过被锁的，读到其余 profile 的 cookie"""
+        import types
+
+        def read(browser, profile=None):
+            if profile is None or profile == "locked":
+                raise RuntimeError("share-locked (OS error 32)")
+            return types.SimpleNamespace(
+                as_list=lambda: [
+                    {
+                        "name": "s",
+                        "value": "v",
+                        "domain": ".zhihu.com",
+                        "http_only": True,
+                    }
+                ]
+            )
+
+        mod = types.SimpleNamespace(
+            read=read,
+            profiles=lambda b: [
+                {
+                    "profile": {
+                        "profile_id": "locked",
+                        "display_name": "Default",
+                        "path": "C:/UD/Default",
+                    }
+                },
+                {
+                    "profile": {
+                        "profile_id": "ok",
+                        "display_name": "P1",
+                        "path": "C:/UD/Profile 1",
+                    }
+                },
+            ],
+        )
+        monkeypatch.setitem(sys.modules, "rookie_cookies", mod)
+        monkeypatch.setattr(
+            auth_store, "_import_chrome", lambda s: pytest.fail("不该回落")
+        )
+        summary = auth_store.import_from_browser("chrome")
+        assert summary["imported"] == 1
+        cookie = json.loads((auth_dir / "zhihu.com.json").read_text())["cookies"][0]
+        assert cookie["httpOnly"] is True  # 蛇形键映射生效
+
+    def test_rookie_all_profiles_locked_falls_back(self, monkeypatch, auth_dir):
+        """逐 profile 也全失败（如 keyring 锁定）→ Linux 回落内置实现；
+        非 Linux 给出真实的失败原因（而非误导性的“需要安装”）"""
+        import types
+
+        monkeypatch.setattr(sys, "platform", "linux")
+
+        mod = types.SimpleNamespace(
+            read=lambda browser, profile=None: (_ for _ in ()).throw(
+                RuntimeError("keyring 锁定")
+            ),
+            profiles=lambda b: [
+                {
+                    "profile": {
+                        "profile_id": "p1",
+                        "display_name": "Default",
+                        "path": "C:/UD/Default",
+                    }
+                }
+            ],
+        )
+        monkeypatch.setitem(sys.modules, "rookie_cookies", mod)
+        monkeypatch.setattr(
+            auth_store, "_import_chrome", lambda s: {"a.com": [{"name": "x"}]}
+        )
+        summary = auth_store.import_from_browser("chrome")
+        assert summary["imported"] == 1  # 内置实现的结果
+
+        # 同场景在 Windows：不给误导性的“需要安装”，报真实失败原因
+        monkeypatch.setattr(sys, "platform", "win32")
+        summary = auth_store.import_from_browser("chrome")
+        assert summary["imported"] == 0
+        assert "读取失败" in summary["reason"]
+        assert "pip install" not in summary["reason"]
+
 
 class TestImportFirefox:
+    @pytest.fixture(autouse=True)
+    def _builtin_path_only(self, monkeypatch):
+        """锁定内置实现路径：环境装没装 rookie-cookies / 跑在哪个平台都不影响
+
+        （装了 rookie 时 read() 会读到本机真实浏览器数据，测试结果不可复现；
+        内置 _import_firefox 只在 Linux 生效，一并钉住）
+        """
+        monkeypatch.setattr(auth_store, "_try_rookie", lambda *a: None)
+        monkeypatch.setattr(sys, "platform", "linux")
+
     def test_import_from_fake_sqlite(self, tmp_path, monkeypatch, auth_dir):
         """Firefox cookies.sqlite 明文——造一个假 profile 验证读取与写文件"""
         profile = tmp_path / "ff.default"

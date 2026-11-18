@@ -31,6 +31,7 @@ def _crawl(argv):
             "  crawl site <url>       站内递归爬取\n"
             "  crawl search <query>   网页搜索（--news/--books/--videos 换类型）\n"
             "  crawl images <query>   图片搜索（--download 下载到本地）\n"
+            "  crawl auth list        登录态管理（import 导入 / check 验证）\n"
             "\n"
             "示例:\n"
             "  crawl https://example.com        单页，Markdown 输出到 stdout\n"

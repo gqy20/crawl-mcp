@@ -21,9 +21,12 @@ repos:
         types: [python]
         pass_filenames: false
 
+      # 工作区有未暂存改动时整体跳过：pre-commit 会先 stash 这些改动，
+      # hook 里写 docs 或 git add 都会让 stash 恢复冲突（"Stashed changes
+      # conflicted with hook auto-fixes"）并中止提交。全部 add 后再提交即恢复自动更新。
       - id: bench
         name: bench
-        entry: bash -c 'timeout 300 .venv/bin/python scripts/bench.py --if-changed && git add docs/BENCHMARK.md docs/bench-history.jsonl || echo "[bench] 跳过：网络不可用或超时，文档保留上次结果"'
+        entry: bash -c 'if git diff --quiet; then timeout 300 .venv/bin/python scripts/bench.py --if-changed && git add docs/BENCHMARK.md docs/bench-history.jsonl || echo "[bench] 跳过：网络不可用或超时，文档保留上次结果"; else echo "[bench] 跳过：工作区有未暂存改动，先全部 git add 再提交可自动更新基准文档"; fi'
         language: system
         files: ^(src/.*\.py|scripts/bench\.(py|yml))$
         pass_filenames: false

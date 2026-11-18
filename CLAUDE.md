@@ -69,7 +69,10 @@ uv run python scripts/bench.py --full      # 完整数据集
 
 - **pre-commit hook**：改动 `src/**/*.py` 或 `scripts/bench.{py,yml}` 时自动重跑
   （源码指纹未变则跳过），生成结果 `git add` 后随本次提交一起提交；
-  网络不通时保留上次结果，不阻塞提交
+  网络不通时保留上次结果，不阻塞提交；
+  **工作区有未暂存改动时整体跳过**——pre-commit 会 stash 未暂存改动，
+  hook 里写 docs 或 `git add` 都会让 stash 恢复冲突并中止提交，
+  所以先 `git add` 全部改动再 commit
 - **Claude Code Stop hook**（`.claude/settings.json`）：会话结束时同样自动重跑
 
 `.bench-stamp` 存源码指纹（已 gitignore），用于判断是否需要重跑。

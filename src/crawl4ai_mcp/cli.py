@@ -59,9 +59,7 @@ def _crawl(argv):
         "--quiet", action="store_true", help="不打印浏览器进度日志（只留错误）"
     )
     sel = parser.add_argument_group("正文范围（只在浏览器路径生效）")
-    sel.add_argument(
-        "--css", help="只提取匹配元素内的正文，如 article / #content"
-    )
+    sel.add_argument("--css", help="只提取匹配元素内的正文，如 article / #content")
     sel.add_argument(
         "--exclude-css",
         help="排除匹配的元素（逗号分隔），如 nav,footer,aside",
@@ -283,7 +281,9 @@ def _auth(argv):
     sub = parser.add_subparsers(dest="action", required=True)
     sub.add_parser("list", help="列出已配置的登录态（域名/cookie 数/更新时间）")
 
-    p_check = sub.add_parser("check", help="验证登录态是否有效（对登录后页面发真实请求）")
+    p_check = sub.add_parser(
+        "check", help="验证登录态是否有效（对登录后页面发真实请求）"
+    )
     p_check.add_argument("name", help="登录态名称（文件名去 .json）")
     p_check.add_argument(
         "--url", required=True, help="一个登录后才能看的页面 URL，用于探测"

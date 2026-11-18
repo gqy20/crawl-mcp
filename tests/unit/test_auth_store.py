@@ -67,16 +67,16 @@ class TestListAndMatch:
                 {"name": "only-a", "value": "1", "domain": ".x.com"},
             ],
         )
-        _write_state(
-            auth_dir, "b", [{"name": "s", "value": "new", "domain": ".x.com"}]
-        )
+        _write_state(auth_dir, "b", [{"name": "s", "value": "new", "domain": ".x.com"}])
         merged = auth_store.merged_state_for(["https://x.com/"])
         by_key = {(c["name"], c["domain"]): c for c in merged["cookies"]}
         assert by_key[("s", ".x.com")]["value"] == "new"  # b 排后面，覆盖 a
         assert ("only-a", ".x.com") in by_key
 
     def test_merged_state_none_when_no_match(self, auth_dir):
-        _write_state(auth_dir, "zhihu", [{"name": "a", "value": "1", "domain": ".zhihu.com"}])
+        _write_state(
+            auth_dir, "zhihu", [{"name": "a", "value": "1", "domain": ".zhihu.com"}]
+        )
         assert auth_store.merged_state_for(["https://example.com/"]) is None
 
 
@@ -112,7 +112,13 @@ class TestChromeDecrypt:
     def test_chrome_unix_epoch(self):
         # 2026-01-01T00:00:00Z ≈ 1767225600 unix；Chrome 纪元差 11644473600
         assert auth_store._chrome_unix(0) == -1
-        assert abs(auth_store._chrome_unix((1767225600 + 11644473600) * 1_000_000) - 1767225600) < 1
+        assert (
+            abs(
+                auth_store._chrome_unix((1767225600 + 11644473600) * 1_000_000)
+                - 1767225600
+            )
+            < 1
+        )
 
 
 class TestRookieEngine:
@@ -137,12 +143,21 @@ class TestRookieEngine:
         calls = self._fake_rookie(
             monkeypatch,
             rows=[
-                {"name": "s", "value": "v", "domain": ".zhihu.com",
-                 "path": "/", "expires": 9999999999, "secure": True,
-                 "httpOnly": False, "sameSite": "no_restriction"},
+                {
+                    "name": "s",
+                    "value": "v",
+                    "domain": ".zhihu.com",
+                    "path": "/",
+                    "expires": 9999999999,
+                    "secure": True,
+                    "httpOnly": False,
+                    "sameSite": "no_restriction",
+                },
             ],
         )
-        monkeypatch.setattr(auth_store, "_import_chrome", lambda s: pytest.fail("不该回落"))
+        monkeypatch.setattr(
+            auth_store, "_import_chrome", lambda s: pytest.fail("不该回落")
+        )
         summary = auth_store.import_from_browser("chrome")
         assert calls["browser"] == "chrome"
         assert summary["imported"] == 1
@@ -186,7 +201,9 @@ class TestRookieEngine:
         assert "reason" not in auth_store.import_from_browser("chrome") or True
 
     def test_rookie_failure_falls_back(self, monkeypatch, auth_dir):
-        self._fake_rookie(monkeypatch, error=RuntimeError("ProviderFailed: keyring 锁定"))
+        self._fake_rookie(
+            monkeypatch, error=RuntimeError("ProviderFailed: keyring 锁定")
+        )
         monkeypatch.setattr(
             auth_store, "_import_chrome", lambda s: {"a.com": [{"name": "x"}]}
         )
@@ -281,8 +298,6 @@ class TestCrawlerIntegration:
         monkeypatch.delenv("CRAWL_MCP_COOKIES", raising=False)
         monkeypatch.delenv("CRAWL_MCP_STORAGE_STATE", raising=False)
         fp0 = _auth_fingerprint()
-        _write_state(
-            auth_dir, "a", [{"name": "n", "value": "1", "domain": ".a.com"}]
-        )
+        _write_state(auth_dir, "a", [{"name": "n", "value": "1", "domain": ".a.com"}])
         fp1 = _auth_fingerprint()
         assert fp1 and fp1 != fp0

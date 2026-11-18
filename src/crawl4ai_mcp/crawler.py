@@ -1022,9 +1022,7 @@ class Crawler:
             {
                 "success": raw.success,
                 # 和 fast 路径同一套清洗（引用链接、链接定义块、短导航行、boilerplate）
-                "markdown": clean_markdown(
-                    Crawler._markdown_text(raw.markdown)
-                )
+                "markdown": clean_markdown(Crawler._markdown_text(raw.markdown))
                 if raw.success
                 else "",
                 "title": raw.metadata.get("title", "") if raw.success else "",

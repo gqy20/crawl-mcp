@@ -177,8 +177,10 @@ class TestAuthCli:
         d.mkdir()
         (d / "example.json").write_text(
             json.dumps(
-                {"cookies": [{"name": "a", "value": "1", "domain": ".example.com"}],
-                 "origins": []}
+                {
+                    "cookies": [{"name": "a", "value": "1", "domain": ".example.com"}],
+                    "origins": [],
+                }
             ),
             encoding="utf-8",
         )
@@ -195,24 +197,28 @@ class TestAuthCli:
     def test_check_reports_valid(self, monkeypatch, tmp_path, capsys):
         d = tmp_path / "auth"
         d.mkdir()
-        (d / "example.json").write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+        (d / "example.json").write_text(
+            '{"cookies": [], "origins": []}', encoding="utf-8"
+        )
         monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
-        with patch("crawl4ai_mcp.crawler.Crawler") as cls, patch(
-            "crawl4ai_mcp.cache.clear"
+        with (
+            patch("crawl4ai_mcp.crawler.Crawler") as cls,
+            patch("crawl4ai_mcp.cache.clear"),
         ):
-            cls.return_value.crawl_single.return_value = _result(
-                markdown="x" * 500
-            )
+            cls.return_value.crawl_single.return_value = _result(markdown="x" * 500)
             assert main(["auth", "check", "example", "--url", "https://x.com/me"]) == 0
         assert "有效" in capsys.readouterr().out
 
     def test_check_reports_login_wall(self, monkeypatch, tmp_path, capsys):
         d = tmp_path / "auth"
         d.mkdir()
-        (d / "example.json").write_text('{"cookies": [], "origins": []}', encoding="utf-8")
+        (d / "example.json").write_text(
+            '{"cookies": [], "origins": []}', encoding="utf-8"
+        )
         monkeypatch.setenv("CRAWL_MCP_AUTH_DIR", str(d))
-        with patch("crawl4ai_mcp.crawler.Crawler") as cls, patch(
-            "crawl4ai_mcp.cache.clear"
+        with (
+            patch("crawl4ai_mcp.crawler.Crawler") as cls,
+            patch("crawl4ai_mcp.cache.clear"),
         ):
             cls.return_value.crawl_single.return_value = _result(
                 success=False, markdown="", error="x", error_code="login_wall"

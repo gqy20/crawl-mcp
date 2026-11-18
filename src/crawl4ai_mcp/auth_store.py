@@ -33,9 +33,7 @@ BROWSERS = ("chrome", "chromium", "firefox")
 
 def auth_dir() -> Path:
     """登录态目录（每次读取，便于测试与运行中调整）"""
-    return Path(
-        os.getenv("CRAWL_MCP_AUTH_DIR", "~/.crawl_mcp/auth")
-    ).expanduser()
+    return Path(os.getenv("CRAWL_MCP_AUTH_DIR", "~/.crawl_mcp/auth")).expanduser()
 
 
 def _registrable(host: str) -> str:
@@ -75,7 +73,11 @@ def list_auths() -> list[dict]:
             out.append({"name": p.stem, "error": str(e)})
             continue
         domains = sorted(
-            {c.get("domain", "").lstrip(".") for c in state.get("cookies", []) if c.get("domain")}
+            {
+                c.get("domain", "").lstrip(".")
+                for c in state.get("cookies", [])
+                if c.get("domain")
+            }
         )
         out.append(
             {
@@ -97,9 +99,7 @@ def match_auth_files(urls: list[str]) -> list[Path]:
     for info in list_auths():
         if "error" in info or not info["domains"]:
             continue
-        if any(
-            domain_matches(h, d) for h in hosts if h for d in info["domains"]
-        ):
+        if any(domain_matches(h, d) for h in hosts if h for d in info["domains"]):
             matched.append(Path(info["path"]))
     return matched
 
@@ -141,7 +141,11 @@ def _profile_dirs(browser: str) -> list[Path]:
             for d in base.iterdir()
             if d.is_dir() and (d / "cookies.sqlite").is_file()
         ]
-    conf = home / ".config/google-chrome" if browser == "chrome" else home / ".config/chromium"
+    conf = (
+        home / ".config/google-chrome"
+        if browser == "chrome"
+        else home / ".config/chromium"
+    )
     out = []
     if conf.is_dir():
         for d in sorted(conf.iterdir()):
@@ -284,13 +288,17 @@ def _chrome_keyring_password() -> bytes | None:
     try:
         import secretstorage
     except ImportError:
-        logger.warning("secretstorage 未安装，v11 cookie 解不了（pip install secretstorage）")
+        logger.warning(
+            "secretstorage 未安装，v11 cookie 解不了（pip install secretstorage）"
+        )
         return None
     try:
         bus = secretstorage.dbus_init()
         col = secretstorage.get_default_collection(bus)
         if col.is_locked():
-            logger.warning("keyring 锁定，v11 cookie 解不了；解锁后重试或用 playwright codegen 导出")
+            logger.warning(
+                "keyring 锁定，v11 cookie 解不了；解锁后重试或用 playwright codegen 导出"
+            )
             return None
         for item in col.get_all_items():
             if item.get_label() == "Chrome Safe Storage":
@@ -309,11 +317,11 @@ def _decrypt_chrome(blob: bytes, keyring_password: bytes | None) -> str | None:
         elif prefix == b"v11":
             if not keyring_password:
                 return None
-            key = hashlib.pbkdf2_hmac(
-                "sha1", keyring_password, b"saltysalt", 1, 16
-            )
+            key = hashlib.pbkdf2_hmac("sha1", keyring_password, b"saltysalt", 1, 16)
         else:  # v20 等更新格式
-            logger.warning("暂不支持的 cookie 加密版本 %r（用 playwright codegen 导出）", prefix)
+            logger.warning(
+                "暂不支持的 cookie 加密版本 %r（用 playwright codegen 导出）", prefix
+            )
             return None
         from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
@@ -356,9 +364,7 @@ def import_from_browser(browser: str, sites: list[str] | None = None) -> dict:
                 ),
             }
         by_site = (
-            _import_firefox(sites)
-            if browser == "firefox"
-            else _import_chrome(sites)
+            _import_firefox(sites) if browser == "firefox" else _import_chrome(sites)
         )
     if not by_site:
         return {"imported": 0, "files": [], "reason": "没有读到任何可用 cookie"}
@@ -373,7 +379,9 @@ def import_from_browser(browser: str, sites: list[str] | None = None) -> dict:
             logger.info("%s 已存在，跳过（不覆盖既有登录态）", path.name)
             continue
         path.write_text(
-            json.dumps({"cookies": cookies, "origins": []}, ensure_ascii=False, indent=1),
+            json.dumps(
+                {"cookies": cookies, "origins": []}, ensure_ascii=False, indent=1
+            ),
             encoding="utf-8",
         )
         written.append({"site": site, "cookies": len(cookies), "path": str(path)})

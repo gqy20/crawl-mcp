@@ -78,7 +78,9 @@ class TestLoginWall:
 
 class TestClassifyLoginWall:
     def test_login_required_error(self):
-        assert classify_error("HTTP 403: Login required to view this page") == "login_wall"
+        assert (
+            classify_error("HTTP 403: Login required to view this page") == "login_wall"
+        )
 
     def test_sign_in_to_continue(self):
         assert classify_error("Please sign in to continue") == "login_wall"

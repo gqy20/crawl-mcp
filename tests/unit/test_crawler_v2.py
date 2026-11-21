@@ -422,10 +422,19 @@ class TestAuthFingerprint:
         with patch("crawl4ai_mcp.crawler.cache") as mock_cache:
             mock_cache.lookup.return_value = None
             mock_cache.get.return_value = None
-            with patch.object(
-                Crawler,
-                "_extract",
-                return_value={"success": True, "markdown": "x" * 300, "title": "t"},
+            with (
+                patch.object(
+                    Crawler,
+                    "_extract",
+                    # _extract 的真实形状是 content 键（决策函数读它判字数）；
+                    # 此前误写成 markdown，content 为空被判定降级浏览器，
+                    # CI 无 Chromium 直接崩，本地则偷偷起真浏览器爬 example.com
+                    return_value={"success": True, "content": "x" * 300, "title": "t"},
+                ),
+                # 护栏：快速路径足够成功就不该碰浏览器，碰了立即报错
+                patch.object(
+                    Crawler, "_crawl", side_effect=AssertionError("不该走浏览器路径")
+                ),
             ):
                 Crawler().crawl_single("https://example.com")
             for call in mock_cache.lookup.call_args_list:

@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.1] - 2026-11-17
+## [0.2.1] - 2026-11-21
 
 ### Added
 
@@ -73,6 +73,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 搜索空结果原地重试无效，改为换后端池重试
 - `LLMConfig.model` 默认值与实际生效的 `glm-4.7` 不一致
 - `crawl --help` 子命令示例补上 `crawl auth`
+- **Windows/macOS Chrome cookie 导入修复**（真机验证）：rookie-cookies 0.6 实际输出
+  蛇形键 `http_only`/`same_site`，此前按驼峰读取导致 httpOnly 全丢、sameSite 全走
+  默认（现在两种键名都认）；浏览器运行中活跃 profile 的库被进程锁住（OS error 32）
+  时改为逐 profile 重试，跳过被锁的尽力导入；会话 cookie `expires=None` 归一 `-1`
+  （此前在过滤器里 `None < float` 直接 TypeError 中断整个导入）；装了 rookie 但
+  读取失败时报真实原因（锁库/keyring），不再误报"需要安装"
+- **`crawl auth check` 识别长登录页**：新增 `looks_like_login_page`（标题即登录页 /
+  正文是登录表单特征，不限长度），GitHub 等上千字登录页此前因字数过阈值逃过短壳
+  判定被误报"有效"（实测 1526 字登录页）；渲染成功后先辨登录页再下结论，
+  正常长文带登录导航不误伤
 
 ### Docs
 
@@ -81,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Verified
 
-- 419 个测试全过；依赖上下限组合验证（crawl4ai 0.9.5 / fastmcp 4.2.0 / ddgs 9.16.1 /
+- 433 个测试全过；依赖上下限组合验证（crawl4ai 0.9.5 / fastmcp 4.2.0 / ddgs 9.16.1 /
   playwright 1.65.2 与 pyproject 下限）
 
 ## [0.2.0] - 2026-06-12
